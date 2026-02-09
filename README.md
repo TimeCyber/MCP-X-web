@@ -6,17 +6,17 @@ MCP-X 是一个**企业级 AI 智能体开发平台**，集成了 AI 对话、�
 
 ## 📸 功能截图
 
-### 创作者中心
-![创作者中心](./public/images/screenshot-1.png)
+### 统一入口
+![统一入口](./public/images/screenshot-2.png)
 
-### AI 视频工作室
-![AI 视频工作室](./public/images/screenshot-2.png)
+### 内容精选
+![内容精选](./public/images/screenshot-1.png)
 
-### AI 对话系统
-![AI 对话系统](./public/images/screenshot-3.png)
+### 图片创作中心
+![图片创作中心](./public/images/screenshot-3.png)
 
-### MCP 服务市场
-![MCP 服务市场](./public/images/screenshot-4.png)
+### 视频创作中心
+![视频创作中心](./public/images/screenshot-4.png)
 
 ---
 
