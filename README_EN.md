@@ -1,0 +1,304 @@
+# MCP-X Agent Development Platform
+
+MCP-X is an **enterprise-grade AI agent development platform** that integrates AI conversation, video generation, image editing, frontend application building, and other creative tools, providing a one-stop AI workflow solution for enterprises and developers.
+
+---
+
+## 📸 Screenshots
+
+### Unified Portal
+![Unified Portal](./public/images/screenshot-2.png)
+
+### Featured Content
+![Featured Content](./public/images/screenshot-1.png)
+
+### Image Creation Center
+![Image Creation Center](./public/images/screenshot-3.png)
+
+### Video Creation Center
+![Video Creation Center](./public/images/screenshot-4.png)
+
+---
+
+## 🏢 Enterprise Platform Features
+
+### 🔐 Security & Reliability
+- **Token Authentication**: Comprehensive user authentication and permission management
+- **Multi-tenancy Support**: Enterprise-grade multi-tenant architecture
+- **Data Isolation**: Secure user data isolation to protect enterprise privacy
+
+### ⚡ High-Performance Architecture
+- **Streaming Response**: SSE real-time streaming output with millisecond-level response
+- **Local Caching**: IndexedDB local storage to reduce server pressure
+- **Asynchronous Processing**: Long-running tasks execute asynchronously without blocking user operations
+
+### 🔌 Open Integration
+- **MCP Protocol Support**: Full support for Model Context Protocol, extensible with any tools
+- **Multi-Model Integration**: Unified interface for GPT, Gemini, DeepSeek, Kimi, and other mainstream models
+- **Standardized API**: RESTful API design for easy secondary development and system integration
+
+### 📊 Enterprise Functions
+- **Knowledge Base Management**: Private enterprise knowledge base with document upload and intelligent retrieval
+- **Workflow Orchestration**: Visual Agent workflow with human approval support
+- **Usage Billing**: Comprehensive package and billing system supporting enterprise procurement
+
+### 🌐 Internationalization
+- **Multi-language Interface**: Chinese and English bilingual support
+- **Localized Deployment**: Support for private deployment to meet data compliance requirements
+
+---
+
+## 🌟 Core Features
+
+### 1. MCP-X Video Studio (AI Video Studio)
+Supports mainstream Chinese models: Qwen, Jimeng, Kling, Hailuo, etc., and international models: Veo3, Runway, etc.
+Complete AI-driven video production workflow system supporting the entire process from script to finished product:
+- **Script Parsing**: AI automatically analyzes scripts, extracting characters, scenes, and story segments
+- **Storyboard Generation**: Intelligently generates professional shot lists including camera movements, shot sizes, and keyframes
+- **Character Design**: AI generates character visual designs
+- **Scene Concept Art**: Automatically generates scene visual designs
+- **Video Generation**: Supports text-to-video, image-to-video, and keyframe interpolation modes
+- **One-Click Export**: Browser-based one-click video clip export
+- **Asset Library Management**: Local IndexedDB storage supporting character/scene/video asset reuse
+
+### 2. AI Conversation System
+Supports mainstream Chinese models: Deepseek, Qwen, KIMI, etc., and international models: OpenAI, etc.
+- **Multi-Model Support**: Integrates GPT, Gemini, DeepSeek, Kimi, and other large language models
+- **Streaming Response**: SSE real-time streaming output
+- **MCP Tool Integration**: Supports Model Context Protocol tool invocation
+- **Web Search**: Integrated web search functionality with result display
+- **Human Intervention**: Agent workflow supports human confirmation and intervention
+- **File Upload**: Supports conversations with file attachments
+
+### 3. Frontend Application Builder (App Builder)
+AI frontend building experience similar to Bolt/Loveable:
+- **Conversational Development**: Describe requirements in natural language, AI generates code in real-time
+- **Multi-Framework Support**: HTML, React, Vue, static websites
+- **Real-Time Preview**: Generated code previewed instantly
+- **Visual Editing**: Click page elements for precise modifications
+- **One-Click Deployment**: Cloud deployment support
+- **Code Download**: Complete code package download
+
+### 4. AI Image Editor
+Supports mainstream Chinese models: Qwen, Seed, etc., and international models: Nano Banana.
+- **Text-to-Image**: Generate images from text descriptions
+- **Image-to-Image**: Generate new images based on reference images
+- **Local Editing**: Mask support for local area editing
+- **Multi-Model Selection**: Support for various image generation models
+
+### 5. MCP Service Marketplace
+- **Service Discovery**: Browse and search MCP services
+- **Category Management**: Service directory organized by function
+- **One-Click Configuration**: Quick configuration and activation of MCP services
+- **Tool Detection**: Automatically detect tool lists provided by services
+
+---
+
+## 💎 Platform Highlights
+
+| Feature | Description |
+|---------|-------------|
+| 🎬 **Full Video Production** | From script to finished product, AI assists throughout, supporting promotional videos, short videos, and drama films |
+| 🔧 **MCP Marketplace** | MCP tool collection and aggregation, with thousands of MCP tools integrated, expanding AI capability boundaries |
+| 🔧 **Agent Marketplace** | Agent collection and aggregation, with 500+ common agents integrated for vertical agent conversations |
+| 💻 **AI Code Generation** | Conversational frontend development with real-time preview, supporting React/Vue/HTML frameworks |
+| 🖼️ **Professional Image Processing** | Text-to-image, image-to-image, local editing, multiple models available for various creative needs |
+| 📚 **Enterprise Knowledge Base** | Private knowledge base management, intelligent document parsing, RAG-enhanced retrieval support |
+| 💰 **Membership Billing** | Pay-as-you-go + subscription packages, supporting membership billing and WeChat recharge |
+| 🌍 **Multi-Language Support** | Chinese and English bilingual interface, AI output supports multiple languages |
+
+---
+
+## 📋 Complete Feature List
+
+### User System
+- User registration/login (email verification code)
+- GitHub OAuth login
+- Token authentication management
+- User settings
+
+### AI Conversation
+- Multi-model conversation
+- Session management (create/delete/history)
+- Streaming response
+- File upload conversation
+- Web search result display
+- Agent workflow human intervention
+
+### MCP Services
+- MCP service list/details
+- Service category browsing
+- Service search
+- User MCP configuration management
+- Tool detection and execution
+
+### Agent Marketplace
+- Agent category list
+- Agent detail view
+- Agent search
+- Featured/Latest agents
+
+### Video Studio
+- Project management (create/delete/save)
+- Script parsing (AI analysis)
+- Storyboard list generation
+- Character design generation
+- Scene concept art generation
+- Keyframe image generation
+- Video generation (text-to-video/image-to-video/keyframe)
+- Video model selection
+- Video resolution/aspect ratio selection
+- Audio upload (local/URL)
+- Video merge and export
+- Asset library management
+
+### Image Editing
+- Text-to-image
+- Image-to-image
+- Mask editing
+- Multi-model selection
+- Image size settings
+
+### Application Building
+- Create application
+- Conversational code generation
+- Real-time preview
+- Application deployment
+- Code download
+- Application management
+
+### Knowledge Base
+- Knowledge base create/edit/delete
+- Attachment upload
+- Knowledge fragment management
+- File translation
+
+### Payment System
+- VIP packages
+- WeChat payment
+- Order management
+- Balance inquiry
+
+### Other Features
+- Multi-language support (Chinese/English)
+- Feedback submission
+- Contact us
+
+## 🛠 Tech Stack
+
+- **Frontend Framework**: React 18 + TypeScript
+- **Build Tool**: Vite
+- **UI Framework**: Tailwind CSS + Ant Design
+- **State Management**: Zustand + React Context
+- **Routing**: React Router v6
+- **HTTP Client**: Axios
+- **Markdown Rendering**: react-markdown + remark-gfm
+- **Animation**: Framer Motion
+- **Icons**: Lucide React
+- **Local Storage**: IndexedDB
+- **Video Processing**: FFmpeg.wasm
+- **File Compression**: JSZip
+
+## 🚀 Quick Start
+
+### Requirements
+- Node.js 18+
+- npm or yarn
+
+### Install Dependencies
+```bash
+npm install
+```
+
+### Development Mode
+```bash
+npm run dev
+```
+
+### Production Build
+```bash
+npm run build
+```
+
+### Preview Build
+```bash
+npm run preview
+```
+
+## 📁 Project Structure
+
+```
+src/
+├── assets/          # Static resources
+├── components/      # Components
+│   ├── app/         # Application building components
+│   ├── chat/        # Chat components
+│   ├── image-editor/# Image editing components
+│   ├── layout/      # Layout components
+│   ├── ui/          # Common UI components
+│   ├── video-gen/   # Video generation components
+│   └── workflow/    # Workflow components
+├── config/          # Configuration files
+├── contexts/        # React Context
+├── data/            # Static data
+├── hooks/           # Custom Hooks
+├── i18n/            # Internationalization
+├── pages/           # Page components
+├── services/        # API services
+├── styles/          # Style files
+├── types/           # TypeScript type definitions
+└── utils/           # Utility functions
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+Configure in `.env.local`:
+```
+VITE_API_BASE_URL=Your API address
+VITE_STATIC_BASE_URL=Static resource address
+```
+
+### MCP Configuration
+MCP service configuration supports multiple transport methods:
+- stdio (command line)
+- SSE (Server-Sent Events)
+- WebSocket
+
+## 📖 Related Documentation
+
+- [Video Generation API Documentation](./VIDEO_GENERATION_API.md)
+- [MCP-X Video Studio Integration Guide](./CINEGEN_INTEGRATION.md)
+- [Frontend Building Feature Guide](./APP_BUILD_FEATURE.md)
+- [Asset Library Feature Guide](./ASSET_LIBRARY_FEATURE.md)
+- [Human Intervention Integration Guide](./HUMAN_FEEDBACK_INTEGRATION.md)
+
+## 📄 License
+
+This project is licensed under **Apache License 2.0** with additional commercial use terms:
+
+- ✅ Free for individual users
+- ✅ Free for educational institutions
+- ✅ Free for non-profit organizations
+- ✅ Free for companies with fewer than 20 employees
+- ⚠️ **Companies with 20 or more employees require commercial authorization**
+
+### Commercial Authorization
+
+If your company/organization has 20 or more employees and wishes to use this software for commercial purposes, please contact us for commercial authorization:
+
+📧 **Commercial Authorization Inquiry**: ganyizhi@timecyber.com.cn
+
+For detailed terms, please refer to the [LICENSE](./LICENSE) file.
+
+## 🤝 Contact Us
+
+For questions or suggestions, please contact us through:
+- Submit an Issue
+- Email: ganyizhi@timecyber.com.cn
+- Join WeChat Group:
+
+<div align="center">
+  <img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="300"/>
+  <p>Scan to join MCP-X Technical Exchange Group</p>
+</div>
