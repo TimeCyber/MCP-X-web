@@ -30,6 +30,7 @@ import { WorkflowBuilderPage } from './pages/WorkflowBuilderPage';
 import ImageEditorPage from './pages/ImageEditorPage';
 import VideoGenPage from './pages/VideoGenPage';
 import CreatorHubPage from './pages/CreatorHubPage';
+import { DocsPage } from './pages/DocsPage';
 
 function App() {
   return (
@@ -45,7 +46,7 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
           <Route path="/add-server" element={<AddServerPage />} />
-          <Route path="/docs" element={<div className="min-h-screen bg-black flex items-center justify-center text-white">Documentation Page</div>} />
+          <Route path="/docs" element={<DocsPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/careers" element={<CareersPage />} />
           <Route path="/contact" element={<ContactPage />} />
