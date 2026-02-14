@@ -4,6 +4,22 @@ MCP-X 是一个**企业级 AI 智能体开发平台**，集成了 AI 对话、�
 
 ---
 
+## 🔥 限时福利：加群享100元生图生视频Token！
+
+💰 **GitHub用户专属福利**：扫描下方二维码加入微信群，即可免费领取 **100元等值** 的AI生图生视频Token！
+
+🎨 **包含权益**：
+- 🎬 **视频生成Token**：支持高清视频创作
+- 🖼️ **图像生成Token**：专业级AI绘画服务
+- ⚡ **立即到账**：扫码进群后工作人员立即发放
+
+<div align="center">
+  <img src="./public/images/wechat-group-qrcode.jpg" alt="微信交流群" width="300"/>
+  <p><strong>👆 扫码加入领取100元Token福利！</strong></p>
+</div>
+
+---
+
 ## 📸 功能截图
 
 ### 统一入口

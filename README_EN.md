@@ -4,6 +4,22 @@ MCP-X is an **enterprise-grade AI agent development platform** that integrates A
 
 ---
 
+## 🔥 Limited Time Offer: Join Group for 100 RMB Worth of AI Tokens!
+
+💰 **GitHub Users Exclusive**: Scan the QR code below to join our WeChat group and get **100 RMB equivalent** AI image/video generation tokens for FREE!
+
+🎨 **Benefits Include**:
+- 🎬 **Video Generation Tokens**: Support for HD video creation
+- 🖼️ **Image Generation Tokens**: Professional AI art services
+- ⚡ **Instant Credit**: Tokens credited immediately after joining the group
+
+<div align="center">
+  <img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="300"/>
+  <p><strong>👆 Scan to join and claim your 100 RMB token bonus!</strong></p>
+</div>
+
+---
+
 ## 📸 Screenshots
 
 ### Unified Portal
