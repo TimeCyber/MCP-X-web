@@ -31,6 +31,14 @@ export interface ImageInput {
   mimeType: string;
 }
 
+// Reference material 类型定义
+export interface ReferenceMaterial {
+  type: 'image' | 'video';
+  url?: string;
+  data?: string;
+  mimeType?: string;
+}
+
 // 文生图响应类型
 export interface TextToImageResponse {
   code: number;
@@ -103,7 +111,8 @@ export async function generateImageFromText(
   model?: string,
   sessionId?: string,
   imageSize?: { width: number; height: number },
-  watermark?: boolean
+  watermark?: boolean,
+  referenceMaterials?: ReferenceMaterial[]
 ): Promise<{ newImageBase64: string | null; newImageMimeType: string | null; textResponse: string | null; imageUrl?: string | null; }> {
   // 创建超时Promise
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -130,6 +139,10 @@ export async function generateImageFromText(
 
     if (imageSize) {
       requestData.size = `${imageSize.width}*${imageSize.height}`;
+    }
+
+    if (referenceMaterials && referenceMaterials.length > 0) {
+      requestData.referenceMaterials = referenceMaterials;
     }
 
     const response = await apiClient.post('/ai/image/generate', requestData);

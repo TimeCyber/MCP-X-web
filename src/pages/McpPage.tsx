@@ -231,6 +231,20 @@ const McpPageContent: React.FC = () => {
             <div className="w-full max-w-2xl mt-8">
               <SearchBar onSearch={handleSearchBarSearch} searchQuery={searchQuery} onClear={handleClearSearch} />
             </div>
+
+            {/* 添加服务器按钮 */}
+            <div className="mt-6 flex justify-center">
+              <Link
+                to="/add-server"
+                className="bg-orange-500 hover:bg-orange-600 text-black font-medium text-sm rounded-md px-6 py-3 transition-colors flex items-center whitespace-nowrap shadow-lg hover:shadow-xl"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                {currentLanguage === 'zh' ? '添加服务器' : 'Add Server'}
+              </Link>
+            </div>
           </div>
         </div>
 

@@ -101,6 +101,7 @@ Supports mainstream Chinese models: Qwen, Seed, etc., and international models: 
 - **Image-to-Image**: Generate new images based on reference images
 - **Local Editing**: Mask support for local area editing
 - **Multi-Model Selection**: Support for various image generation models
+- **Image-to-Video**: Generate dynamic videos from images with multiple resolution and duration options
 
 ### 5. MCP Service Marketplace
 - **Service Discovery**: Browse and search MCP services
@@ -174,6 +175,7 @@ Supports mainstream Chinese models: Qwen, Seed, etc., and international models: 
 - Mask editing
 - Multi-model selection
 - Image size settings
+- Image-to-video
 
 ### Application Building
 - Create application

@@ -36,6 +36,7 @@ export const QuickPrompts: React.FC<QuickPromptsProps> = ({ t, setPrompt, disabl
     return (
         <div className="relative" ref={wrapperRef}>
             <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setIsMenuOpen(prev => !prev)}
                 disabled={disabled}
                 aria-label={t('quickPromptsAriaLabel') || '选择快捷效果'}
@@ -55,10 +56,11 @@ export const QuickPrompts: React.FC<QuickPromptsProps> = ({ t, setPrompt, disabl
                     {userEffects.length > 0 ? (
                         userEffects.map((effect) => (
                             <div key={effect.id} className="group flex items-center justify-between p-2 rounded-md hover:bg-white/10 text-white/90 text-sm transition-colors">
-                                <button onClick={() => handleSelect(effect.value)} className="flex-grow text-left truncate">
+                                <button onMouseDown={(e) => e.preventDefault()} onClick={() => handleSelect(effect.value)} className="flex-grow text-left truncate">
                                     {effect.name}
                                 </button>
                                 <button
+                                    onMouseDown={(e) => e.preventDefault()}
                                     onClick={() => onDeleteUserEffect(effect.id)}
                                     title={t('myEffects.deleteEffectTooltip') || '删除效果'}
                                     className="ml-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500/50 transition-opacity flex-shrink-0"
@@ -82,7 +84,8 @@ export const QuickPrompts: React.FC<QuickPromptsProps> = ({ t, setPrompt, disabl
                             </h4>
                             {promptsArray.map((item: {name: string, value: string}, index: number) => (
                                 <button 
-                                    key={index} 
+                                    key={index}
+                                    onMouseDown={(e) => e.preventDefault()}
                                     onClick={() => handleSelect(item.value)}
                                     className="block w-full text-left p-2 rounded-md hover:bg-white/10 text-white/90 text-sm transition-colors"
                                 >

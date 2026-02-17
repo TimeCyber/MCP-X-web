@@ -1,5 +1,5 @@
 // MCP-X Video Studio 服务 - 使用项目现有的 API 接口
-import { generateImageFromText, editImage } from './imageApi';
+import { generateImageFromText, editImage, ReferenceMaterial } from './imageApi';
 import { chatApi, streamChatSend, SendDTO } from './chatApi';
 import config from '../config';
 import type { ScriptData, Shot, Character, Scene, VideoGenProject } from '../types/videogen';
@@ -1292,6 +1292,7 @@ export const generateVideo = async (
   audioUrl?: string, // 音频文件URL
   seed?: number, // 生成视频时使用的seed值
   referenceImages?: string[], // 额外的参考图（如角色图、场景图）
+  referenceMaterials?: ReferenceMaterial[], // @功能引用的素材
 ): Promise<VideoGenerationResult> => {
   const userId = localStorage.getItem('userId');
   const token = localStorage.getItem('token');
@@ -1337,6 +1338,12 @@ export const generateVideo = async (
   if (referenceImages && referenceImages.length > 0) {
     requestBody.refImages = referenceImages;
     console.log(`添加了 ${referenceImages.length} 张参考图到视频生成请求`);
+  }
+
+  // 如果提供了@功能的引用素材，添加 referenceMaterials 参数
+  if (referenceMaterials && referenceMaterials.length > 0) {
+    requestBody.referenceMaterials = referenceMaterials;
+    console.log(`添加了 ${referenceMaterials.length} 个引用素材到视频生成请求`);
   }
 
   console.log(`生成视频请求: sessionId=${sessionId}, appId=${appId}, model=${requestBody.model}, duration=${requestBody.duration}s, audio=${audio}, hasAudioData=${!!audioData}, hasAudioUrl=${!!audioUrl}, seed=${seed}`);

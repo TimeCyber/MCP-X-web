@@ -105,4 +105,5 @@ export interface Board {
   zoom?: number;
   canvasBackgroundColor?: string;
   sessionId?: string;
+  isLoading?: boolean; // 标记画板是否正在加载图片
 }

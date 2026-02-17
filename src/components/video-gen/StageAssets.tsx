@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { User, MapPin, Check, Sparkles, Loader2, Users, RefreshCw, Shirt, Plus, X, Image as ImageIcon, Palette, Database, FolderOpen, Upload, Aperture, Eye } from 'lucide-react';
+import { User, MapPin, Check, Sparkles, Loader2, Users, RefreshCw, Shirt, Plus, X, Image as ImageIcon, Palette, Database, FolderOpen, Upload, Aperture, Eye, Film } from 'lucide-react';
 import type { VideoGenProject, CharacterVariation } from '../../types/videogen';
 import { generateImage, generateVisualPrompts, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, IMAGE_STYLES, uploadFileToOss } from '../../services/videogenService';
 import { modelApi, ModelInfo } from '../../services/modelApi';
+import { chatApi } from '../../services/chatApi';
+
+// 跨项目资源项
+interface CrossProjectAsset {
+  type: 'image' | 'video';
+  url: string;
+  thumbnailUrl?: string; // 视频缩略图
+  prompt?: string;
+  source: string; // 来源描述
+}
 
 interface Props {
   project: VideoGenProject;
@@ -51,6 +61,12 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
   
   // 预览大图
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // 资源库内的跨项目资源 Tab 状态
+  const [projectTabs, setProjectTabs] = useState<{ id: string; sessionId: string; title: string }[]>([]);
+  const [activeLibraryTabId, setActiveLibraryTabId] = useState<string>('local'); // 'local' = 本地资源库
+  const [crossProjectAssets, setCrossProjectAssets] = useState<CrossProjectAsset[]>([]);
+  const [loadingCrossAssets, setLoadingCrossAssets] = useState(false);
 
   // 加载图像模型列表
   useEffect(() => {
@@ -531,12 +547,57 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
     setLibraryType(type);
     setSelectingForId(id);
     setShowLibraryModal(true);
+    setActiveLibraryTabId('local'); // 重置为本地资源库
     
     try {
+      // 加载本地资源库
       const assets = await getAssetsFromLibrary(type);
       setLibraryAssets(assets);
+      console.log('✅ 本地资源库加载成功:', assets.length, '个资源');
+      
+      // 加载所有视频工作室项目作为 tabs
+      const userId = localStorage.getItem('userId');
+      console.log('📌 当前用户ID:', userId);
+      console.log('📌 当前项目sessionId:', project.sessionId);
+      
+      if (userId) {
+        const response = await chatApi.getSessionList(userId, 'mcpx-video-studio');
+        console.log('📦 获取项目列表响应:', response);
+        
+        if (response.code === 200) {
+          // API返回的数据在 rows 字段中
+          const sessions = (response.rows || response.data || []) as any[];
+          console.log('📋 所有视频工作室项目:', sessions.length, '个');
+          console.log('项目列表:', sessions.map((s: any) => ({ id: s.id, title: s.sessionTitle })));
+          
+          // 过滤掉当前项目 - 使用字符串比较确保类型一致
+          const currentSessionId = String(project.sessionId || '');
+          console.log('🔍 当前项目ID (转字符串):', currentSessionId);
+          
+          const otherProjects = sessions
+            .filter((s: any) => {
+              const sessionIdStr = String(s.id || '');
+              const isCurrentProject = sessionIdStr === currentSessionId;
+              console.log(`项目 ${s.sessionTitle} (${sessionIdStr}): ${isCurrentProject ? '当前项目，过滤掉' : '其他项目，保留'}`);
+              return !isCurrentProject;
+            })
+            .map((s: any) => ({
+              id: s.id,
+              sessionId: s.id,
+              title: s.sessionTitle || '未命名项目'
+            }));
+          
+          console.log('✅ 设置项目tabs:', otherProjects.length, '个');
+          console.log('Tabs内容:', otherProjects);
+          setProjectTabs(otherProjects);
+        } else {
+          console.warn('⚠️ API响应异常:', response);
+        }
+      } else {
+        console.warn('⚠️ 用户未登录');
+      }
     } catch (error: any) {
-      console.error('加载资源库失败:', error);
+      console.error('❌ 加载资源库失败:', error);
       
       // 检查是否是数据库结构问题
       if (error.name === 'NotFoundError' || error.message?.includes('object stores')) {
@@ -549,28 +610,226 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
   };
 
   // 从资源库选择
-  const handleSelectFromLibrary = (asset: AssetLibraryItem) => {
+  const handleSelectFromLibrary = (asset: AssetLibraryItem | CrossProjectAsset) => {
     if (!project.scriptData || !selectingForId) return;
     
     const newData = { ...project.scriptData };
+    const imageUrl = 'imageUrl' in asset ? asset.imageUrl : asset.url;
+    const visualPrompt = 'visualPrompt' in asset ? asset.visualPrompt : ('prompt' in asset ? asset.prompt : undefined);
     
-    if (asset.type === 'character') {
+    if (libraryType === 'character') {
       const char = newData.characters.find(c => String(c.id) === String(selectingForId));
       if (char) {
-        char.referenceImage = asset.imageUrl;
-        if (asset.visualPrompt) char.visualPrompt = asset.visualPrompt;
+        char.referenceImage = imageUrl;
+        if (visualPrompt) char.visualPrompt = visualPrompt;
       }
     } else {
       const scene = newData.scenes.find(s => String(s.id) === String(selectingForId));
       if (scene) {
-        scene.referenceImage = asset.imageUrl;
-        if (asset.visualPrompt) scene.visualPrompt = asset.visualPrompt;
+        scene.referenceImage = imageUrl;
+        if (visualPrompt) scene.visualPrompt = visualPrompt;
       }
     }
     
     updateProject({ scriptData: newData });
     setShowLibraryModal(false);
     setSelectingForId(null);
+  };
+
+  // 加载跨项目资源
+  const loadCrossProjectAssets = async (sessionId: string) => {
+    setLoadingCrossAssets(true);
+    setCrossProjectAssets([]);
+    
+    try {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        throw new Error('用户未登录');
+      }
+
+      console.log('🔄 开始加载跨项目资源，sessionId:', sessionId);
+
+      // 获取该项目的聊天记录
+      const response = await chatApi.getChatList({ sessionId, userId });
+      console.log('📦 获取聊天记录响应:', response);
+      console.log('📦 响应code:', response.code, '类型:', typeof response.code);
+      
+      // 检查响应是否成功 - 兼容不同的成功码
+      if (response.code !== 200 && response.code !== '200' && !response.rows && !response.data) {
+        console.error('❌ API响应失败:', response);
+        throw new Error(`加载项目数据失败: ${response.msg || '未知错误'}`);
+      }
+
+      // API返回的数据在 rows 字段中
+      const messages = (response.rows || response.data || []) as any[];
+      console.log('📋 聊天记录数量:', messages.length);
+      
+      const assets: CrossProjectAsset[] = [];
+
+      // 从消息中提取图片和视频 URL
+      const urlRegex = /(https?:\/\/[^\s<>"]+?\.(jpg|jpeg|png|gif|webp|mp4|mov|avi))/gi;
+      
+      messages.forEach((msg: any) => {
+        if (msg.content) {
+          const matches = msg.content.matchAll(urlRegex);
+          for (const match of matches) {
+            const url = match[1];
+            const ext = match[2].toLowerCase();
+            const isVideo = ['mp4', 'mov', 'avi'].includes(ext);
+            
+            assets.push({
+              type: isVideo ? 'video' : 'image',
+              url: url,
+              source: `消息 #${msg.id?.slice(0, 8) || 'unknown'}`,
+              prompt: msg.content.substring(0, 100)
+            });
+          }
+        }
+      });
+
+      console.log('📸 从消息中提取到', assets.length, '个资源');
+
+      // 尝试从 sessionContent 解析项目数据
+      const session = await chatApi.getSessionList(userId, 'mcpx-video-studio');
+      console.log('📦 获取项目列表响应:', session);
+      
+      if (session.code === 200 || session.code === '200') {
+        const sessions = (session.rows || session.data || []) as any[];
+        console.log('📋 找到', sessions.length, '个项目');
+        
+        const targetSession = sessions.find((s: any) => String(s.id) === String(sessionId));
+        console.log('🎯 目标项目:', targetSession ? targetSession.sessionTitle : '未找到');
+        
+        if (targetSession?.sessionContent) {
+          try {
+            const projectData = JSON.parse(targetSession.sessionContent);
+            
+            // 提取角色图片
+            if (projectData.scriptData?.characters) {
+              projectData.scriptData.characters.forEach((char: any) => {
+                if (char.referenceImage) {
+                  assets.push({
+                    type: 'image',
+                    url: char.referenceImage,
+                    source: `角色: ${char.name}`,
+                    prompt: char.visualPrompt
+                  });
+                }
+                if (char.threeViewImage) {
+                  assets.push({
+                    type: 'image',
+                    url: char.threeViewImage,
+                    source: `角色三视图: ${char.name}`,
+                    prompt: char.visualPrompt
+                  });
+                }
+                // 角色变体
+                if (char.variations) {
+                  char.variations.forEach((v: any) => {
+                    if (v.referenceImage) {
+                      assets.push({
+                        type: 'image',
+                        url: v.referenceImage,
+                        source: `${char.name} - ${v.name}`,
+                        prompt: v.visualPrompt
+                      });
+                    }
+                  });
+                }
+              });
+            }
+            
+            // 提取场景图片
+            if (projectData.scriptData?.scenes) {
+              projectData.scriptData.scenes.forEach((scene: any) => {
+                if (scene.referenceImage) {
+                  assets.push({
+                    type: 'image',
+                    url: scene.referenceImage,
+                    source: `场景: ${scene.location}`,
+                    prompt: scene.visualPrompt
+                  });
+                }
+              });
+            }
+            
+            // 提取关键帧
+            if (projectData.keyframes) {
+              projectData.keyframes.forEach((kf: any) => {
+                if (kf.imageUrl) {
+                  assets.push({
+                    type: 'image',
+                    url: kf.imageUrl,
+                    source: `关键帧 #${kf.id}`,
+                    prompt: kf.visualPrompt
+                  });
+                }
+              });
+            }
+            
+            // 提取生成的视频
+            if (projectData.generatedVideos) {
+              projectData.generatedVideos.forEach((video: any) => {
+                if (video.url) {
+                  assets.push({
+                    type: 'video',
+                    url: video.url,
+                    thumbnailUrl: video.thumbnailUrl,
+                    source: `生成视频 #${video.id || 'unknown'}`,
+                    prompt: video.prompt
+                  });
+                }
+              });
+            }
+            console.log('📊 从项目数据中提取资源统计:');
+            console.log('  - 角色图片:', projectData.scriptData?.characters?.length || 0);
+            console.log('  - 场景图片:', projectData.scriptData?.scenes?.length || 0);
+            console.log('  - 关键帧:', projectData.keyframes?.length || 0);
+            console.log('  - 生成视频:', projectData.generatedVideos?.length || 0);
+          } catch (parseError) {
+            console.warn('⚠️ 解析项目数据失败:', parseError);
+          }
+        } else {
+          console.log('ℹ️ 目标项目没有 sessionContent 数据');
+        }
+      } else {
+        console.warn('⚠️ 获取项目列表失败:', session);
+      }
+
+      // 去重
+      const uniqueAssets = assets.filter((asset, index, self) =>
+        index === self.findIndex((a) => a.url === asset.url)
+      );
+
+      console.log('✅ 加载完成，总共', assets.length, '个资源，去重后', uniqueAssets.length, '个');
+      console.log('📊 资源类型统计:');
+      console.log('  - 图片:', uniqueAssets.filter(a => a.type === 'image').length);
+      console.log('  - 视频:', uniqueAssets.filter(a => a.type === 'video').length);
+      
+      setCrossProjectAssets(uniqueAssets);
+    } catch (error: any) {
+      console.error('❌ 加载跨项目资源失败:', error);
+      console.error('错误详情:', error.message, error.stack);
+      alert(`加载失败: ${error.message || '未知错误'}`);
+    } finally {
+      setLoadingCrossAssets(false);
+    }
+  };
+
+  // 当切换资源库 Tab 时
+  const handleLibraryTabChange = (tabId: string) => {
+    setActiveLibraryTabId(tabId);
+    
+    if (tabId === 'local') {
+      // 切换回本地资源库，不需要额外操作
+      return;
+    }
+    
+    // 切换到某个项目，加载该项目的资源
+    const tab = projectTabs.find(t => t.id === tabId);
+    if (tab?.sessionId) {
+      loadCrossProjectAssets(tab.sessionId);
+    }
   };
 
   // 从资源库删除
@@ -858,7 +1117,7 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
                 <div>
                   <h3 className="text-lg font-bold text-white">资源库</h3>
                   <p className="text-xs text-zinc-500 font-mono uppercase tracking-wider">
-                    {libraryType === 'character' ? '角色库' : '场景库'} - {libraryAssets.length} 个资源
+                    {libraryType === 'character' ? '角色库' : '场景库'}
                   </p>
                 </div>
               </div>
@@ -866,6 +1125,8 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
                 onClick={() => {
                   setShowLibraryModal(false);
                   setSelectingForId(null);
+                  setActiveLibraryTabId('local');
+                  setCrossProjectAssets([]);
                 }} 
                 className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
               >
@@ -873,79 +1134,205 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
               </button>
             </div>
             
+            {/* Tabs inside Modal */}
+            <div className="border-b border-zinc-800 bg-[#161616] px-6 flex items-center gap-0 shrink-0 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
+              <button
+                onClick={() => handleLibraryTabChange('local')}
+                className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider whitespace-nowrap border-b-2 transition-colors ${
+                  activeLibraryTabId === 'local'
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                本地资源库
+              </button>
+              {(() => {
+                console.log('🎨 渲染Tabs，projectTabs数量:', projectTabs.length);
+                console.log('🎨 projectTabs内容:', projectTabs);
+                return projectTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => handleLibraryTabChange(tab.id)}
+                    className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors max-w-[160px] truncate ${
+                      activeLibraryTabId === tab.id
+                        ? 'border-indigo-500 text-white'
+                        : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    title={tab.title}
+                  >
+                    {tab.title}
+                  </button>
+                ));
+              })()}
+            </div>
+            
             {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-8">
-              {libraryAssets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                  <Database className="w-16 h-16 mb-4 opacity-20" />
-                  <p className="text-sm">资源库为空</p>
-                  <p className="text-xs mt-2">生成{libraryType === 'character' ? '角色' : '场景'}图片后，可以添加到资源库</p>
-                </div>
-              ) : (
-                <div className={`grid ${libraryType === 'character' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'} gap-6`}>
-                  {libraryAssets.map((asset) => (
-                    <div 
-                      key={asset.id} 
-                      className="bg-[#0A0A0A] border border-zinc-800 rounded-xl overflow-hidden group hover:border-indigo-500 transition-all cursor-pointer"
-                      onClick={() => handleSelectFromLibrary(asset)}
-                    >
-                      <div className={`${libraryType === 'character' ? 'aspect-[3/4]' : 'aspect-video'} bg-zinc-900 relative group/libitem`}>
-                        <img src={asset.imageUrl} alt={asset.name} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/libitem:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm gap-3">
-                          <button 
+              {activeLibraryTabId === 'local' ? (
+                // 本地资源库视图
+                libraryAssets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                    <Database className="w-16 h-16 mb-4 opacity-20" />
+                    <p className="text-sm">资源库为空</p>
+                    <p className="text-xs mt-2">生成{libraryType === 'character' ? '角色' : '场景'}图片后，可以添加到资源库</p>
+                  </div>
+                ) : (
+                  <div className={`grid ${libraryType === 'character' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'} gap-6`}>
+                    {libraryAssets.map((asset) => (
+                      <div 
+                        key={asset.id} 
+                        className="bg-[#0A0A0A] border border-zinc-800 rounded-xl overflow-hidden group hover:border-indigo-500 transition-all cursor-pointer"
+                        onClick={() => handleSelectFromLibrary(asset)}
+                      >
+                        <div className={`${libraryType === 'character' ? 'aspect-[3/4]' : 'aspect-video'} bg-zinc-900 relative group/libitem`}>
+                          <img src={asset.imageUrl} alt={asset.name} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/libitem:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm gap-3">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewImage(asset.imageUrl);
+                              }}
+                              className="p-3 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white transition-all border border-white/20"
+                              title="查看大图"
+                            >
+                              <Eye className="w-6 h-6" />
+                            </button>
+                            <div className="text-center">
+                              <Check className="w-8 h-8 text-white mx-auto mb-2" />
+                              <p className="text-white text-sm font-bold">选择此资源</p>
+                            </div>
+                          </div>
+                          <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setPreviewImage(asset.imageUrl);
+                              if (asset.id) handleDeleteFromLibrary(asset.id);
                             }}
-                            className="p-3 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white transition-all border border-white/20"
-                            title="查看大图"
+                            className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="从资源库删除"
                           >
-                            <Eye className="w-6 h-6" />
+                            <X className="w-3 h-3" />
                           </button>
-                          <div className="text-center">
-                            <Check className="w-8 h-8 text-white mx-auto mb-2" />
-                            <p className="text-white text-sm font-bold">选择此资源</p>
-                          </div>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (asset.id) handleDeleteFromLibrary(asset.id);
-                          }}
-                          className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="从资源库删除"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
+                        <div className="p-3 border-t border-zinc-800">
+                          <h4 className="font-bold text-zinc-200 text-sm truncate mb-1">{asset.name}</h4>
+                          {asset.visualPrompt && (
+                            <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono">{asset.visualPrompt}</p>
+                          )}
+                          {asset.metadata && (
+                            <div className="flex gap-1 mt-2 flex-wrap">
+                              {asset.metadata.gender && (
+                                <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
+                                  {asset.metadata.gender}
+                                </span>
+                              )}
+                              {asset.metadata.age && (
+                                <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
+                                  {asset.metadata.age}
+                                </span>
+                              )}
+                              {asset.metadata.time && (
+                                <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
+                                  {asset.metadata.time}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="p-3 border-t border-zinc-800">
-                        <h4 className="font-bold text-zinc-200 text-sm truncate mb-1">{asset.name}</h4>
-                        {asset.visualPrompt && (
-                          <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono">{asset.visualPrompt}</p>
-                        )}
-                        {asset.metadata && (
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {asset.metadata.gender && (
-                              <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
-                                {asset.metadata.gender}
-                              </span>
-                            )}
-                            {asset.metadata.age && (
-                              <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
-                                {asset.metadata.age}
-                              </span>
-                            )}
-                            {asset.metadata.time && (
-                              <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded uppercase font-mono">
-                                {asset.metadata.time}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                // 跨项目资源视图
+                loadingCrossAssets ? (
+                  <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                    <Loader2 className="w-8 h-8 animate-spin mb-4 text-indigo-500" />
+                    <p className="text-sm">正在加载项目资源...</p>
+                  </div>
+                ) : crossProjectAssets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                    <Database className="w-16 h-16 mb-4 opacity-20" />
+                    <p className="text-sm">该项目暂无可用资源</p>
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {/* 图片资源 */}
+                    {crossProjectAssets.filter(a => a.type === 'image').length > 0 && (
+                      <section>
+                        <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
+                          图片资源 ({crossProjectAssets.filter(a => a.type === 'image').length})
+                        </h3>
+                        <div className={`grid ${libraryType === 'character' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'} gap-4`}>
+                          {crossProjectAssets.filter(a => a.type === 'image').map((asset, idx) => (
+                            <div 
+                              key={idx} 
+                              className="bg-[#0A0A0A] border border-zinc-800 rounded-xl overflow-hidden group hover:border-indigo-500 transition-all cursor-pointer"
+                              onClick={() => handleSelectFromLibrary(asset)}
+                            >
+                              <div className={`${libraryType === 'character' ? 'aspect-[3/4]' : 'aspect-video'} bg-zinc-900 relative group/crossitem`}>
+                                <img src={asset.url} alt={asset.source} className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/crossitem:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm gap-3">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewImage(asset.url);
+                                    }}
+                                    className="p-3 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white transition-all border border-white/20"
+                                    title="查看大图"
+                                  >
+                                    <Eye className="w-6 h-6" />
+                                  </button>
+                                  <div className="text-center">
+                                    <Check className="w-8 h-8 text-white mx-auto mb-2" />
+                                    <p className="text-white text-sm font-bold">选择此资源</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="p-3 border-t border-zinc-800">
+                                <h4 className="font-bold text-zinc-200 text-sm truncate mb-1">{asset.source}</h4>
+                                {asset.prompt && (
+                                  <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono">{asset.prompt}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {/* 视频资源 */}
+                    {crossProjectAssets.filter(a => a.type === 'video').length > 0 && (
+                      <section>
+                        <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                          视频资源 ({crossProjectAssets.filter(a => a.type === 'video').length})
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {crossProjectAssets.filter(a => a.type === 'video').map((asset, idx) => (
+                            <div key={idx} className="bg-[#141414] border border-zinc-800 rounded-xl overflow-hidden group hover:border-zinc-600 transition-all">
+                              <div className="aspect-video bg-zinc-900 relative">
+                                <video
+                                  src={asset.url}
+                                  poster={asset.thumbnailUrl}
+                                  controls
+                                  preload="metadata"
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-[10px] text-white font-bold uppercase border border-white/10 flex items-center gap-1">
+                                  <Film className="w-3 h-3" /> Video
+                                </div>
+                              </div>
+                              <div className="p-2 border-t border-zinc-800">
+                                <p className="text-[10px] text-zinc-400 truncate font-mono">{asset.source}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                )
               )}
             </div>
           </div>

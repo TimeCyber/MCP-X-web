@@ -440,6 +440,7 @@ export const CreatorHubPage: React.FC = () => {
   const location = useLocation();
   const { currentLanguage } = useLanguage();
   const [selectedType, setSelectedType] = useState<CreationType>('text');
+  const [backgroundLoaded, setBackgroundLoaded] = useState(true);
   const [prompt, setPrompt] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -472,6 +473,19 @@ export const CreatorHubPage: React.FC = () => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [isCreatingSimilar, setIsCreatingSimilar] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [isNavbarTransparent, setIsNavbarTransparent] = useState(true);
+
+  // 监听滚动，控制导航栏透明度
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollY = window.scrollY;
+      // 滚动超过50px时，导航栏变为不透明
+      setIsNavbarTransparent(scrollY < 50);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // 关闭模式下拉菜单
   useEffect(() => {
@@ -541,7 +555,7 @@ export const CreatorHubPage: React.FC = () => {
 
       // 添加搜索关键词
       if (searchKeyword.trim()) {
-        params.keyword = searchKeyword.trim();
+        params.originalPrompt = searchKeyword.trim();
       }
 
       const response = await showcaseApi.getShowcaseList(params);
@@ -815,42 +829,53 @@ export const CreatorHubPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
-      <Navbar />
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col relative">
+      <Navbar transparent={isNavbarTransparent} />
       
-      <main className="flex-grow flex flex-col items-center justify-center px-4 py-12 lg:py-20">
-        {/* GitHub 开源链接和文档按钮 */}
-        <div className="mb-8 lg:mb-10 flex gap-4">
-          <a
-            href="https://github.com/TimeCyber/MCP-X-web"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2 lg:px-6 lg:py-3 bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 rounded-full text-white font-medium shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
-          >
-            <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="currentColor" viewBox="0 0 24 24">
-              <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
-            </svg>
-            <span className="text-sm lg:text-base">
-              {currentLanguage === 'zh' ? 'GitHub 开源' : 'Open Source'}
-            </span>
-          </a>
-          
-          <button
-            onClick={() => navigate('/docs')}
-            className="inline-flex items-center gap-2 px-4 py-2 lg:px-6 lg:py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 rounded-full text-white font-medium shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
-          >
-            <svg className="w-5 h-5 lg:w-6 lg:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-            </svg>
-            <span className="text-sm lg:text-base">
-              {currentLanguage === 'zh' ? '应用文档' : 'Documentation'}
-            </span>
-          </button>
-        </div>
+      {/* 全局背景 - 从页面顶部开始，覆盖导航栏区域 */}
+      <div className="absolute left-0 right-0 top-0 w-full h-[600px] lg:h-[800px] pointer-events-none">
+        {/* 图片背景 */}
+        <div
+          className={`absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-500 ${
+            selectedType === 'video' ? 'opacity-0' : 'opacity-40'
+          }`}
+          style={{
+            backgroundImage: 'url(/images/hero.jpg)',
+            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
+            filter: 'brightness(1.3)'
+          }}
+        />
 
-        {/* 头部标题 - 带模式下拉 */}
-        <div className="text-center mb-12 lg:mb-16">
-          <h1 className="text-4xl font-bold mb-2 text-white">
+        {/* 视频背景 */}
+        <video
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${
+            selectedType === 'video' ? 'opacity-40' : 'opacity-0'
+          }`}
+          style={{
+            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
+            filter: 'brightness(1.3)'
+          }}
+          autoPlay
+          loop
+          muted
+          playsInline
+          onLoadedData={() => setBackgroundLoaded(true)}
+          onError={() => setBackgroundLoaded(true)}
+        >
+          <source src="/images/hero.mp4" type="video/mp4" />
+        </video>
+      </div>
+
+      <main className="flex-grow flex flex-col items-center justify-center px-4 py-12 lg:py-20 relative z-10">
+        {/* Hero 区域 - 不再需要单独的背景图 */}
+        <div className="w-full flex flex-col items-center relative">
+          {/* Hero 内容 */}
+          <div className="w-full flex flex-col items-center">
+            {/* 头部标题 - 带模式下拉 */}
+            <div className="text-center mb-12 lg:mb-16">
+              <h1 className="text-4xl font-bold mb-2 text-white">
             {currentLanguage === 'zh' ? '开启你的 ' : 'Start your '}
             <span className="relative inline-block" ref={modeDropdownRef}>
               <button
@@ -881,6 +906,7 @@ export const CreatorHubPage: React.FC = () => {
                     <button
                       key={option.type}
                       onClick={() => {
+                        setBackgroundLoaded(false);
                         setSelectedType(option.type);
                         setShowModeDropdown(false);
                         setUploadedImages([]);
@@ -1206,9 +1232,44 @@ export const CreatorHubPage: React.FC = () => {
             ))}
           </div>
         </div>
+          </div>
+        </div>
+
+        {/* Banner 区域 - 请将banner文件放置在public/images/目录下，命名为banner.jpg、banner.png等 */}
+        <div className="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mt-4 lg:mt-6">
+          <img
+            src="/images/banner.jpg"
+            alt="Banner"
+            className="w-full h-auto rounded-xl shadow-lg cursor-pointer hover:shadow-xl transition-shadow duration-300"
+            onClick={() => navigate('/login')}
+            onError={(e) => {
+              // 如果banner.jpg不存在，尝试其他常见格式
+              const img = e.target as HTMLImageElement;
+              const extensions = ['png', 'jpeg', 'gif', 'webp'];
+              let tried = 0;
+
+              const tryNext = () => {
+                if (tried < extensions.length) {
+                  img.src = `/images/banner.${extensions[tried]}`;
+                  tried++;
+                } else {
+                  // 所有格式都尝试失败，隐藏banner
+                  img.style.display = 'none';
+                }
+              };
+
+              tryNext();
+            }}
+            onLoad={() => {
+              // 图片加载成功，确保显示
+              const img = document.querySelector('img[alt="Banner"]') as HTMLImageElement;
+              if (img) img.style.display = 'block';
+            }}
+          />
+        </div>
 
         {/* 精选内容展示区 */}
-        <div className="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mt-16 lg:mt-20">
+        <div className="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mt-4 lg:mt-6">
           <div className="flex items-center justify-between mb-8 gap-4">
             <h2 className="text-2xl lg:text-3xl font-bold text-white">
               {currentLanguage === 'zh' ? 'AIGC开源社区' : 'AIGC Community'}

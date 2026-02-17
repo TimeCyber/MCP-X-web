@@ -10,7 +10,7 @@ import { BoardPanel } from '../components/image-editor/BoardPanel';
 import { QuickPrompts } from '../components/image-editor/QuickPrompts';
 import type { Tool, Point, Element, ImageElement, PathElement, ShapeElement, TextElement, ArrowElement, UserEffect, LineElement, WheelAction, GroupElement, Board, VideoElement } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
-import { editImage, generateImageFromText, fetchImageAsBase64 } from '../services/imageApi';
+import { editImage, generateImageFromText, fetchImageAsBase64, ReferenceMaterial } from '../services/imageApi';
 import { modelApi, ModelInfo } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo } from '../services/videogenService';
@@ -470,9 +470,9 @@ const ImageEditorPage: React.FC = () => {
     return null;
   }, []);
 
-  // 从聊天记录中解析图片元素（只解析 AI 返回的图片）
-  const parseImagesFromMessages = useCallback(async (messages: any[]): Promise<ImageElement[]> => {
-    const imageElements: ImageElement[] = [];
+  // 从聊天记录中解析图片和视频元素（只解析 AI 返回的内容）
+  const parseImagesFromMessages = useCallback(async (messages: any[]): Promise<Element[]> => {
+    const elements: Element[] = [];
     let positionOffset = 0;
 
     for (const msg of messages) {
@@ -480,6 +480,7 @@ const ImageEditorPage: React.FC = () => {
       if (msg.role === 'assistant' && msg.content) {
         const content = msg.content;
         const imageUrls: string[] = [];
+        const videoUrls: string[] = [];
 
         // 1. 解析 <images> 标签中的图片URL
         const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
@@ -490,7 +491,16 @@ const ImageEditorPage: React.FC = () => {
           }
         }
 
-        // 2. 解析直接的图片 URL（http/https 开头，以常见图片扩展名结尾）
+        // 2. 解析 <video> 标签中的视频URL
+        const videoTagMatches = content.matchAll(/<video>(.*?)<\/video>/gs);
+        for (const match of videoTagMatches) {
+          const url = match[1]?.trim();
+          if (url && url.startsWith('http')) {
+            videoUrls.push(url);
+          }
+        }
+
+        // 3. 解析直接的图片 URL（http/https 开头，以常见图片扩展名结尾）
         const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
         for (const match of urlMatches) {
           const url = match[1];
@@ -499,7 +509,16 @@ const ImageEditorPage: React.FC = () => {
           }
         }
 
-        // 3. 解析 base64 图片
+        // 4. 解析直接的视频 URL（http/https 开头，以常见视频扩展名结尾）
+        const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
+        for (const match of videoUrlMatches) {
+          const url = match[1];
+          if (url && !videoUrls.includes(url)) {
+            videoUrls.push(url);
+          }
+        }
+
+        // 5. 解析 base64 图片
         const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
         for (const match of base64Matches) {
           const url = match[1];
@@ -539,7 +558,7 @@ const ImageEditorPage: React.FC = () => {
             const x = 200 + col * (displayWidth + spacing);
             const y = 200 + row * (displayHeight + spacing);
 
-            imageElements.push({
+            elements.push({
               id: generateId(),
               type: 'image',
               x: x,
@@ -558,14 +577,99 @@ const ImageEditorPage: React.FC = () => {
             console.error('加载图片失败:', imageUrl, error);
           }
         }
+
+        // 加载所有找到的视频
+        for (const videoUrl of videoUrls) {
+          try {
+            // 创建视频元素
+            const video = document.createElement('video');
+            video.crossOrigin = 'anonymous';
+            video.preload = 'metadata';
+            video.muted = false;
+            video.playsInline = true;
+
+            // 等待视频元数据加载完成以获取尺寸
+            await new Promise<void>((resolve, reject) => {
+              video.onloadedmetadata = () => {
+                video.currentTime = 0.1; // 跳到第一帧
+              };
+              video.onseeked = () => resolve();
+              video.onerror = () => reject(new Error('视频加载失败'));
+              video.src = videoUrl;
+              video.load();
+            });
+
+            // 限制视频显示尺寸
+            const maxDisplaySize = 800;
+            let displayWidth = video.videoWidth || 640;
+            let displayHeight = video.videoHeight || 360;
+            
+            if (displayWidth > maxDisplaySize || displayHeight > maxDisplaySize) {
+              const scale = Math.min(maxDisplaySize / displayWidth, maxDisplaySize / displayHeight);
+              displayWidth = displayWidth * scale;
+              displayHeight = displayHeight * scale;
+            }
+
+            // 计算视频位置，避免重叠
+            const columnsPerRow = 5;
+            const row = Math.floor(positionOffset / columnsPerRow);
+            const col = positionOffset % columnsPerRow;
+            const spacing = 100;
+            const x = 200 + col * (displayWidth + spacing);
+            const y = 200 + row * (displayHeight + spacing);
+
+            elements.push({
+              id: generateId(),
+              type: 'video',
+              x: x,
+              y: y,
+              width: displayWidth,
+              height: displayHeight,
+              videoUrl: videoUrl,
+              href: videoUrl,
+              video: video,
+              isPlaying: false,
+              visible: true,
+              locked: false
+            } as VideoElement);
+
+            positionOffset++;
+          } catch (error) {
+            console.error('加载视频失败:', videoUrl, error);
+            // 即使视频加载失败，也创建一个占位元素
+            const columnsPerRow = 5;
+            const row = Math.floor(positionOffset / columnsPerRow);
+            const col = positionOffset % columnsPerRow;
+            const spacing = 100;
+            const displayWidth = 640;
+            const displayHeight = 360;
+            const x = 200 + col * (displayWidth + spacing);
+            const y = 200 + row * (displayHeight + spacing);
+
+            elements.push({
+              id: generateId(),
+              type: 'video',
+              x: x,
+              y: y,
+              width: displayWidth,
+              height: displayHeight,
+              videoUrl: videoUrl,
+              href: videoUrl,
+              visible: true,
+              locked: false
+            } as VideoElement);
+
+            positionOffset++;
+          }
+        }
       }
     }
 
-    return imageElements;
+    return elements;
   }, []);
 
-  // 加载 session 的聊天记录并解析图片
-  const loadSessionImages = useCallback(async (sessionId: string): Promise<ImageElement[]> => {
+  // 加载 session 的聊天记录并解析图片和视频
+  const loadSessionImages = useCallback(async (sessionId: string): Promise<Element[]> => {
     const userId = localStorage.getItem('userId');
     if (!userId) return [];
 
@@ -573,6 +677,8 @@ const ImageEditorPage: React.FC = () => {
       const response = await chatApi.getChatList({ sessionId, userId });
       if (response.code === 200 && response.rows) {
         console.log('加载session聊天记录成功, 消息数:', response.rows.length);
+        // 保存消息列表用于@功能
+        setSessionMessages(response.rows);
         return await parseImagesFromMessages(response.rows);
       }
     } catch (error) {
@@ -580,6 +686,23 @@ const ImageEditorPage: React.FC = () => {
     }
     return [];
   }, [parseImagesFromMessages]);
+
+  // 加载当前session的所有messages用于@功能
+  const loadSessionMessages = useCallback(async (sessionId: string) => {
+    const userId = localStorage.getItem('userId');
+    if (!userId) return;
+
+    try {
+      const response = await chatApi.getChatList({ sessionId, userId });
+      if (response.code === 200 && response.rows) {
+        console.log('加载session消息列表成功, 消息数:', response.rows.length);
+        setSessionMessages(response.rows);
+        console.log('@功能: session消息已加载，可用于@输入');
+      }
+    } catch (error) {
+      console.error('加载session消息列表失败:', error);
+    }
+  }, []);
 
   // 为 Board 创建 session
   const createSessionForBoard = useCallback(async (boardId: string, boardName: string): Promise<string | undefined> => {
@@ -654,6 +777,16 @@ const ImageEditorPage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [isInputFocused, setIsInputFocused] = useState(false);
+
+  // @功能相关状态
+  const [sessionMessages, setSessionMessages] = useState<any[]>([]);
+  const [atMentionedElements, setAtMentionedElements] = useState<Array<{type: 'image' | 'video', src: string, alt?: string, id: string, tag?: string, tagIndex?: number}>>([]);
+  const [showAtSuggestions, setShowAtSuggestions] = useState(false);
+  const [atSuggestions, setAtSuggestions] = useState<Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}>>([]);
+  const [atCursorPosition, setAtCursorPosition] = useState<number>(0);
+  const atCursorPositionRef = useRef<number>(0);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(-1);
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [showCanvasSettings, setShowCanvasSettings] = useState(false);
@@ -749,6 +882,295 @@ const ImageEditorPage: React.FC = () => {
 
     window.addEventListener('resize', updateCanvasSize);
     return () => window.removeEventListener('resize', updateCanvasSize);
+  }, []);
+
+  // 监听currentSessionId变化，加载session messages用于@功能
+  useEffect(() => {
+    if (currentSessionId) {
+      loadSessionMessages(currentSessionId);
+    }
+  }, [currentSessionId, loadSessionMessages]);
+
+  // 清理hover状态
+  useEffect(() => {
+    return () => {
+      setHoveredElementId(null);
+    };
+  }, []);
+
+  // 处理@输入逻辑
+  const handleAtInput = useCallback(async (value: string, cursorPos: number) => {
+    const atIndex = value.lastIndexOf('@', cursorPos - 1);
+    if (atIndex === -1) {
+      setShowAtSuggestions(false);
+      return;
+    }
+
+    const textAfterAt = value.substring(atIndex + 1, cursorPos);
+    if (textAfterAt.includes(' ')) {
+      setShowAtSuggestions(false);
+      return;
+    }
+
+    console.log('@功能触发:', { sessionMessagesCount: sessionMessages.length, canvasElementsCount: elements.length, textAfterAt });
+
+    // 解析session messages中的所有媒体元素（图片和视频）
+    const allMediaElements: Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> = [];
+    const addedSrcs = new Set<string>(); // 用于去重
+
+    // 1. 先从 session messages 中解析
+    for (const msg of sessionMessages) {
+      if (msg.role === 'assistant' && msg.content) {
+        const content = msg.content;
+
+        // 解析图片URL
+        const imageUrls: string[] = [];
+        const videoUrls: string[] = [];
+
+        // 1. 解析 <images> 标签中的图片URL
+        const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
+        for (const match of imagesTagMatches) {
+          const url = match[1]?.trim();
+          if (url && (url.startsWith('http') || url.startsWith('data:'))) {
+            imageUrls.push(url);
+          }
+        }
+
+        // 2. 解析 <video> 标签中的视频URL
+        const videoTagMatches = content.matchAll(/<video>(.*?)<\/video>/gs);
+        for (const match of videoTagMatches) {
+          const url = match[1]?.trim();
+          if (url && url.startsWith('http')) {
+            videoUrls.push(url);
+          }
+        }
+
+        // 3. 解析直接的图片 URL
+        const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
+        for (const match of urlMatches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) {
+            imageUrls.push(url);
+          }
+        }
+
+        // 4. 解析直接的视频 URL
+        const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
+        for (const match of videoUrlMatches) {
+          const url = match[1];
+          if (url && !videoUrls.includes(url)) {
+            videoUrls.push(url);
+          }
+        }
+
+        // 5. 解析 base64 图片
+        const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
+        for (const match of base64Matches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) {
+            imageUrls.push(url);
+          }
+        }
+
+        // 添加图片元素
+        imageUrls.forEach((url, index) => {
+          addedSrcs.add(url);
+          allMediaElements.push({
+            type: 'image',
+            src: url,
+            alt: `图片 ${allMediaElements.length + 1}`,
+            id: `at_${msg.id}_image_${index}`,
+            listIndex: allMediaElements.length + 1
+          });
+        });
+
+        // 添加视频元素
+        videoUrls.forEach((url, index) => {
+          addedSrcs.add(url);
+          allMediaElements.push({
+            type: 'video',
+            src: url,
+            alt: `视频 ${allMediaElements.length + 1}`,
+            id: `at_${msg.id}_video_${index}`,
+            listIndex: allMediaElements.length + 1
+          });
+        });
+      }
+    }
+
+    // 2. 从画布上的元素补充（处理缓存加载、session未加载等情况）
+    for (const el of elements) {
+      if (el.type === 'image' && (el as any).href) {
+        const src = (el as any).href as string;
+        if (!addedSrcs.has(src)) {
+          addedSrcs.add(src);
+          allMediaElements.push({
+            type: 'image',
+            src: src,
+            alt: `图片 ${allMediaElements.length + 1}`,
+            id: `canvas_${el.id}`,
+            listIndex: allMediaElements.length + 1
+          });
+        }
+      } else if (el.type === 'video' && (el as any).videoUrl) {
+        const src = (el as any).videoUrl as string;
+        if (!addedSrcs.has(src)) {
+          addedSrcs.add(src);
+          allMediaElements.push({
+            type: 'video',
+            src: src,
+            alt: `视频 ${allMediaElements.length + 1}`,
+            id: `canvas_${el.id}`,
+            listIndex: allMediaElements.length + 1
+          });
+        }
+      }
+    }
+
+    // 过滤匹配的元素
+    const filteredElements = allMediaElements.filter(element => {
+      const searchText = textAfterAt.toLowerCase();
+      return element.src.toLowerCase().includes(searchText) ||
+             element.alt?.toLowerCase().includes(searchText) ||
+             `${element.type} ${allMediaElements.indexOf(element) + 1}`.includes(searchText);
+    });
+
+    console.log('找到的媒体元素:', allMediaElements.length, '过滤后:', filteredElements.length);
+    setAtSuggestions(filteredElements);
+    setShowAtSuggestions(filteredElements.length > 0);
+    setSelectedSuggestionIndex(-1); // 重置选择索引
+    setAtCursorPosition(cursorPos);
+    atCursorPositionRef.current = cursorPos;
+  }, [sessionMessages, elements]);
+
+  // 选择@建议
+  const selectAtSuggestion = useCallback((element: {type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}, currentPrompt: string, cursorPos: number): { newPrompt: string; newCursorPos: number } => {
+    // 找到当前正在输入的@符号（从光标位置向前查找最近的@）
+    let atIndex = -1;
+    for (let i = cursorPos - 1; i >= 0; i--) {
+      if (currentPrompt[i] === '@') {
+        // 检查这个@后面是否没有空格（表示正在输入的@）
+        const textAfterAt = currentPrompt.substring(i + 1, cursorPos);
+        if (!textAfterAt.includes(' ')) {
+          atIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (atIndex === -1) return { newPrompt: currentPrompt, newCursorPos: cursorPos };
+
+    const beforeAt = currentPrompt.substring(0, atIndex);
+    const afterAt = currentPrompt.substring(cursorPos);
+
+    // 使用建议列表中的稳定编号作为标签名，如 @图片1, @视频3
+    const elementName = element.type === 'image' ? '图片' : '视频';
+    const atTag = `@${elementName}${element.listIndex}`;
+
+    // 添加到@的元素列表（包含标签信息用于后续处理）
+    const elementWithTag = {
+      ...element,
+      tag: atTag,
+      tagIndex: element.listIndex
+    };
+    // 先移除同id的旧记录（防止重复添加），再添加新的
+    setAtMentionedElements(prev => [...prev.filter(e => e.id !== element.id), elementWithTag]);
+
+    const newPrompt = beforeAt + atTag + ' ' + afterAt;
+    const newCursorPos = beforeAt.length + atTag.length + 1; // +1 for the space
+    setShowAtSuggestions(false);
+    setSelectedSuggestionIndex(-1);
+
+    return { newPrompt, newCursorPos };
+  }, []);
+
+  // 构建referenceMaterials数组，按照@标签在prompt中出现的顺序排列
+  const buildReferenceMaterials = useCallback(async (): Promise<ReferenceMaterial[]> => {
+    // 找出prompt中所有@标签，按出现顺序排列并去重
+    const tagPattern = /@(?:图片|视频)\d+/g;
+    const orderedTags: string[] = [];
+    let match: RegExpExecArray | null;
+    const tagPatternCopy = new RegExp(tagPattern);
+    while ((match = tagPatternCopy.exec(prompt)) !== null) {
+      if (!orderedTags.includes(match[0])) {
+        orderedTags.push(match[0]);
+      }
+    }
+
+    const materials: ReferenceMaterial[] = [];
+
+    for (const tag of orderedTags) {
+      // 找到对应的@元素
+      const element = atMentionedElements.find(e => e.tag === tag);
+      if (!element) continue;
+
+      if (element.type === 'image') {
+        const material: ReferenceMaterial = {
+          type: 'image',
+          url: element.src
+        };
+
+        if (element.src.startsWith('data:')) {
+          const [mimeType, base64Data] = element.src.split(',');
+          material.data = base64Data;
+          material.mimeType = mimeType.split(':')[1].split(';')[0];
+        } else {
+          material.url = element.src;
+        }
+
+        materials.push(material);
+      } else if (element.type === 'video') {
+        const material: ReferenceMaterial = {
+          type: 'video',
+          url: element.src
+        };
+
+        if (element.src.startsWith('data:')) {
+          const [mimeType, base64Data] = element.src.split(',');
+          material.data = base64Data;
+          material.mimeType = mimeType.split(':')[1].split(';')[0];
+        } else {
+          material.url = element.src;
+        }
+
+        materials.push(material);
+      }
+    }
+
+    return materials;
+  }, [atMentionedElements, prompt]);
+
+  // 处理prompt替换，将@标签替换为后端需要的格式
+  // 按照@标签在prompt中出现的顺序，依次替换为 character1, character2, ...
+  const processPromptForBackend = useCallback((originalPrompt: string): string => {
+    // 找出prompt中所有@标签及其位置，按出现顺序排列
+    const tagPattern = /@(?:图片|视频)\d+/g;
+    const matches: { tag: string; index: number }[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = tagPattern.exec(originalPrompt)) !== null) {
+      matches.push({ tag: match[0], index: match.index });
+    }
+
+    // 按出现位置排序（其实 exec 已经是按顺序的，保险起见）
+    matches.sort((a, b) => a.index - b.index);
+
+    // 按出现顺序分配 character 编号，去重（同一个标签多次出现使用同一个编号）
+    const tagToCharacter = new Map<string, string>();
+    let characterIndex = 1;
+    for (const m of matches) {
+      if (!tagToCharacter.has(m.tag)) {
+        tagToCharacter.set(m.tag, `character${characterIndex}`);
+        characterIndex++;
+      }
+    }
+
+    // 替换所有@标签
+    let processedPrompt = originalPrompt;
+    tagToCharacter.forEach((backendTag, tag) => {
+      processedPrompt = processedPrompt.replace(new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), backendTag);
+    });
+
+    return processedPrompt;
   }, []);
 
   // 键盘快捷键支持（删除选中元素等）
@@ -1212,6 +1634,8 @@ const ImageEditorPage: React.FC = () => {
         video.load();
 
         setVideoProgress({ message: '视频生成完成！' });
+        // 清除@的元素
+        setAtMentionedElements([]);
         toast.success('视频生成成功！');
       } else {
         throw new Error('视频生成失败');
@@ -1304,17 +1728,45 @@ const ImageEditorPage: React.FC = () => {
       return;
     }
 
-    // 恢复图片元素的 Image 对象
+    // 恢复图片和视频元素的对象
     const restoreBoardImages = async (boardsData: Board[]): Promise<Board[]> => {
       const restoredBoards: Board[] = [];
       for (const board of boardsData) {
         const restoredElements = await Promise.all(board.elements.map(async (el) => {
+          // 恢复图片元素
           if (el.type === 'image' && el.href && !el.image) {
             return new Promise<Element>((resolve) => {
               const img = new Image();
               img.onload = () => resolve({ ...el, image: img });
               img.onerror = () => resolve(el);
               img.src = el.href || '';
+            });
+          }
+          // 恢复视频元素
+          if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
+            const videoEl = el as VideoElement;
+            return new Promise<Element>((resolve) => {
+              const video = document.createElement('video');
+              video.crossOrigin = 'anonymous';
+              video.preload = 'metadata';
+              video.muted = false;
+              video.playsInline = true;
+              
+              video.onloadedmetadata = () => {
+                video.currentTime = 0.1;
+              };
+              
+              video.onseeked = () => {
+                resolve({ ...videoEl, video: video, isPlaying: false });
+              };
+              
+              video.onerror = () => {
+                // 即使加载失败也返回元素
+                resolve(videoEl);
+              };
+              
+              video.src = videoEl.videoUrl || '';
+              video.load();
             });
           }
           return el;
@@ -1424,36 +1876,81 @@ const ImageEditorPage: React.FC = () => {
         const response = await chatApi.getSessionList(userId, 'mcpx-text2image');
 
         if (response.code === 200 && response.rows && response.rows.length > 0) {
-          // 将 sessions 转换为 boards
-          const loadedBoards: Board[] = [];
-
-          for (const session of response.rows) {
+          // 第一步：立即创建所有 boards（空元素），显示 UI
+          const loadedBoards: Board[] = response.rows.map((session: any, index: number) => {
             const sessionId = session.id?.toString() || session.id;
-            const boardName = session.sessionTitle || `Board ${loadedBoards.length + 1}`;
-
-            // 加载该 session 的图片
-            const imageElements = await loadSessionImages(sessionId);
-
-            loadedBoards.push({
-              id: sessionId, // 使用 sessionId 作为 boardId
+            const boardName = session.sessionTitle || `Board ${index + 1}`;
+            
+            return {
+              id: sessionId,
               name: boardName,
-              elements: imageElements,
-              sessionId: sessionId
-            });
-          }
+              elements: [], // 先创建空元素数组
+              sessionId: sessionId,
+              isLoading: true // 标记为加载中
+            };
+          });
 
-          if (loadedBoards.length > 0) {
-            setBoards(loadedBoards);
-            setCurrentBoardId(loadedBoards[0].id);
-            setCurrentSessionId(loadedBoards[0].sessionId);
-            setElements([...loadedBoards[0].elements]);
-            // 保存到缓存
-            saveBoardsToCache(loadedBoards);
-            saveCurrentBoardIdToCache(loadedBoards[0].id);
-            console.log('从后端加载了', loadedBoards.length, '个画板，并已缓存');
-          } else {
-            // 没有找到任何 session，创建默认的 Main Board
-            await createDefaultBoard();
+          // 立即设置 boards 和显示第一个 board
+          setBoards(loadedBoards);
+          setCurrentBoardId(loadedBoards[0].id);
+          setCurrentSessionId(loadedBoards[0].sessionId || '');
+          setElements([]);
+          console.log('创建了', loadedBoards.length, '个画板，开始加载图片...');
+
+          // 第二步：优先加载第一个 board 的图片
+          const firstBoardImages = await loadSessionImages(loadedBoards[0].sessionId || '');
+          
+          // 更新第一个 board 的元素
+          const updatedBoards = [...loadedBoards];
+          updatedBoards[0] = {
+            ...updatedBoards[0],
+            elements: firstBoardImages,
+            isLoading: false
+          };
+          
+          setBoards(updatedBoards);
+          setElements([...firstBoardImages]);
+          saveBoardsToCache(updatedBoards);
+          saveCurrentBoardIdToCache(updatedBoards[0].id);
+          console.log('第一个画板加载完成，包含', firstBoardImages.length, '个元素');
+
+          // 第三步：后台异步加载其他 boards 的图片
+          if (loadedBoards.length > 1) {
+            console.log('开始后台加载其他', loadedBoards.length - 1, '个画板...');
+            
+            // 使用 Promise.all 并行加载，但不阻塞 UI
+            Promise.all(
+              loadedBoards.slice(1).map(async (board, idx) => {
+                try {
+                  const images = await loadSessionImages(board.sessionId || '');
+                  console.log(`后台加载画板 ${idx + 2}/${loadedBoards.length} 完成，包含 ${images.length} 个元素`);
+                  
+                  // 更新对应的 board
+                  setBoards(prev => {
+                    const updated = prev.map(b => 
+                      b.id === board.id 
+                        ? { ...b, elements: images, isLoading: false }
+                        : b
+                    );
+                    saveBoardsToCache(updated);
+                    return updated;
+                  });
+                } catch (error) {
+                  console.error(`加载画板 ${board.name} 失败:`, error);
+                  // 即使失败也标记为加载完成
+                  setBoards(prev => {
+                    const updated = prev.map(b => 
+                      b.id === board.id 
+                        ? { ...b, isLoading: false }
+                        : b
+                    );
+                    return updated;
+                  });
+                }
+              })
+            ).then(() => {
+              console.log('所有画板加载完成');
+            });
           }
         } else {
           // 没有找到任何 session，创建默认的 Main Board
@@ -2318,8 +2815,8 @@ const ImageEditorPage: React.FC = () => {
   };
 
   // Handle text-to-image generation
-  const handleGenerateImage = async (prompt: string) => {
-    if (!prompt.trim()) {
+  const handleGenerateImage = async (originalPrompt: string) => {
+    if (!originalPrompt.trim()) {
       toast.error('请输入提示词');
       return;
     }
@@ -2337,9 +2834,13 @@ const ImageEditorPage: React.FC = () => {
 
     setIsGenerating(true);
     try {
+      // 处理@功能：替换prompt和构建referenceMaterials
+      const processedPrompt = processPromptForBackend(originalPrompt);
+      const referenceMaterials = await buildReferenceMaterials();
+
       const selectedModelInfo = models.find(model => model.id === selectedModel);
       const modelName = selectedModelInfo?.modelName;
-      const result = await generateImageFromText(prompt, modelName, currentSessionId, selectedImageSize);
+      const result = await generateImageFromText(processedPrompt, modelName, currentSessionId, selectedImageSize, referenceMaterials);
 
       // 解析图片URL - 处理特殊格式 data:<images>url</images>data:data:
       const extractImageUrl = (src: string | null | undefined): string | null => {
@@ -2391,6 +2892,8 @@ const ImageEditorPage: React.FC = () => {
             return newElements;
           });
           setSelectedElementIds([newElement.id]);
+          // 清除@的元素
+          setAtMentionedElements([]);
           toast.success('图片生成成功');
         };
 
@@ -2721,13 +3224,37 @@ const ImageEditorPage: React.FC = () => {
     let videoElementId: string | null = null;
 
     try {
+      // 获取选中的图片元素
+      const selectedImages = currentElements.filter(el =>
+        selectedElementIds.includes(el.id) && el.type === 'image'
+      ) as ImageElement[];
+
+      // 准备起始帧和参考图
+      let startImageUrl: string | undefined = undefined;
+      let referenceImages: string[] = [];
+
+      if (selectedImages.length > 0) {
+        // 使用第一张选中的图片作为起始帧
+        startImageUrl = selectedImages[0].href || undefined;
+        
+        // 将所有选中的图片添加到参考图列表
+        referenceImages = selectedImages
+          .map(img => img.href)
+          .filter((href): href is string => !!href);
+        
+        console.log('使用选中图片生成视频:', {
+          startImageUrl,
+          referenceImagesCount: referenceImages.length
+        });
+      }
+
       // 创建空白视频占位元素
       videoElementId = generateId();
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
-        x: 100,
-        y: 100,
+        x: selectedImages.length > 0 ? selectedImages[0].x + selectedImages[0].width + 50 : 100,
+        y: selectedImages.length > 0 ? selectedImages[0].y : 100,
         width: 400,
         height: 225, // 16:9比例
         videoUrl: undefined, // 占位，还没有视频URL
@@ -2748,9 +3275,13 @@ const ImageEditorPage: React.FC = () => {
       setVideoProgress({ message: '正在初始化视频生成...' });
       setGeneratedVideoUrl(null);
 
+      // 处理@功能：替换prompt和构建referenceMaterials
+      const processedPrompt = processPromptForBackend(prompt);
+      const referenceMaterials = await buildReferenceMaterials();
+
       const result = await generateVideo(
-        prompt,
-        undefined, // startImageUrl
+        processedPrompt,
+        startImageUrl, // 使用选中图片作为起始帧
         undefined, // endImageUrl
         selectedVideoModel, // 视频模型
         videoResolution,
@@ -2759,7 +3290,13 @@ const ImageEditorPage: React.FC = () => {
         currentSessionId,
         (progress: any) => {
           setVideoProgress(progress);
-        }
+        },
+        true, // audio: 默认生成同步音频
+        undefined, // audioData
+        undefined, // audioUrl
+        undefined, // seed
+        referenceImages.length > 0 ? referenceImages : undefined, // 传递选中图片作为参考图
+        referenceMaterials // @功能的引用素材
       );
 
       if (result.videoUrl) {
@@ -2833,6 +3370,8 @@ const ImageEditorPage: React.FC = () => {
         video.load();
 
         setVideoProgress({ message: '视频生成完成！' });
+        // 清除@的元素
+        setAtMentionedElements([]);
         toast.success('视频生成成功！');
       } else {
         throw new Error('视频生成失败');
@@ -2902,8 +3441,22 @@ const ImageEditorPage: React.FC = () => {
       const startImageUrl = selectedStartImage.href || '';
       const endImageUrl = selectedEndImage?.href || undefined;
 
+      // 构建参考图数组：将选中的起始图片作为参考图
+      const referenceImages: string[] = [];
+      if (startImageUrl) {
+        referenceImages.push(startImageUrl);
+      }
+      // 如果有结束图片，也添加到参考图
+      if (endImageUrl) {
+        referenceImages.push(endImageUrl);
+      }
+
+      // 处理@功能：替换prompt和构建referenceMaterials
+      const processedPrompt = processPromptForBackend(videoPrompt || '生成流畅的视频动画');
+      const referenceMaterials = await buildReferenceMaterials();
+
       const result = await generateVideo(
-        videoPrompt || '生成流畅的视频动画',
+        processedPrompt,
         startImageUrl,
         endImageUrl,
         selectedVideoModel || undefined,
@@ -2914,7 +3467,12 @@ const ImageEditorPage: React.FC = () => {
         (message: string, current?: number, total?: number) => {
           setVideoProgress({ message, current, total });
         },
-        true // audio: 默认生成同步音频
+        true, // audio: 默认生成同步音频
+        undefined, // audioData
+        undefined, // audioUrl
+        undefined, // seed
+        referenceImages, // 传递参考图数组
+        referenceMaterials // @功能的引用素材
       );
 
       if (result.videoUrl) {
@@ -3448,6 +4006,121 @@ const ImageEditorPage: React.FC = () => {
       ctx.restore();
     });
 
+    // 绘制@hover高亮效果
+    if (hoveredElementId) {
+      const hoveredEl = currentElements.find(el => el.id === hoveredElementId);
+      if (hoveredEl) {
+        ctx.save();
+        
+        // 外层发光效果（多层渐变）
+        for (let i = 0; i < 3; i++) {
+          ctx.strokeStyle = `rgba(59, 130, 246, ${0.3 - i * 0.1})`;
+          ctx.lineWidth = 8 + i * 4;
+          ctx.setLineDash([]);
+          ctx.strokeRect(
+            hoveredEl.x - 4 - i * 2,
+            hoveredEl.y - 4 - i * 2,
+            hoveredEl.width + 8 + i * 4,
+            hoveredEl.height + 8 + i * 4
+          );
+        }
+        
+        // 主边框（粗实线）
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 6;
+        ctx.setLineDash([]);
+        ctx.strokeRect(hoveredEl.x - 3, hoveredEl.y - 3, hoveredEl.width + 6, hoveredEl.height + 6);
+        
+        // 内层虚线边框（动画效果）
+        ctx.strokeStyle = '#60a5fa';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 5]);
+        ctx.strokeRect(hoveredEl.x - 1, hoveredEl.y - 1, hoveredEl.width + 2, hoveredEl.height + 2);
+
+        // 半透明蓝色遮罩（更明显）
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.25)';
+        ctx.fillRect(hoveredEl.x, hoveredEl.y, hoveredEl.width, hoveredEl.height);
+
+        // 四个角的标记（增强视觉效果）
+        const cornerSize = 20;
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([]);
+        
+        // 左上角
+        ctx.beginPath();
+        ctx.moveTo(hoveredEl.x - 3, hoveredEl.y + cornerSize);
+        ctx.lineTo(hoveredEl.x - 3, hoveredEl.y - 3);
+        ctx.lineTo(hoveredEl.x + cornerSize, hoveredEl.y - 3);
+        ctx.stroke();
+        
+        // 右上角
+        ctx.beginPath();
+        ctx.moveTo(hoveredEl.x + hoveredEl.width - cornerSize, hoveredEl.y - 3);
+        ctx.lineTo(hoveredEl.x + hoveredEl.width + 3, hoveredEl.y - 3);
+        ctx.lineTo(hoveredEl.x + hoveredEl.width + 3, hoveredEl.y + cornerSize);
+        ctx.stroke();
+        
+        // 左下角
+        ctx.beginPath();
+        ctx.moveTo(hoveredEl.x - 3, hoveredEl.y + hoveredEl.height - cornerSize);
+        ctx.lineTo(hoveredEl.x - 3, hoveredEl.y + hoveredEl.height + 3);
+        ctx.lineTo(hoveredEl.x + cornerSize, hoveredEl.y + hoveredEl.height + 3);
+        ctx.stroke();
+        
+        // 右下角
+        ctx.beginPath();
+        ctx.moveTo(hoveredEl.x + hoveredEl.width - cornerSize, hoveredEl.y + hoveredEl.height + 3);
+        ctx.lineTo(hoveredEl.x + hoveredEl.width + 3, hoveredEl.y + hoveredEl.height + 3);
+        ctx.lineTo(hoveredEl.x + hoveredEl.width + 3, hoveredEl.y + hoveredEl.height - cornerSize);
+        ctx.stroke();
+
+        // 标签文字（带背景和阴影）
+        const tagLabel = atMentionedElements.find(m => {
+          const canvasEl = currentElements.find(el =>
+            (el.type === m.type) &&
+            ((el as any).href === m.src || (el as any).src === m.src)
+          );
+          return canvasEl?.id === hoveredElementId;
+        })?.tag || '@引用元素';
+
+        const textX = hoveredEl.x + hoveredEl.width / 2;
+        const textY = hoveredEl.y - 20;
+        
+        // 文字背景
+        ctx.font = 'bold 16px Arial';
+        const textMetrics = ctx.measureText(tagLabel);
+        const textWidth = textMetrics.width;
+        const padding = 12;
+        
+        // 背景阴影
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(
+          textX - textWidth / 2 - padding + 2,
+          textY - 16 + 2,
+          textWidth + padding * 2,
+          24
+        );
+        
+        // 背景
+        ctx.fillStyle = '#3b82f6';
+        ctx.fillRect(
+          textX - textWidth / 2 - padding,
+          textY - 16,
+          textWidth + padding * 2,
+          24
+        );
+        
+        // 文字
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(tagLabel, textX, textY - 4);
+        
+        ctx.restore();
+      }
+    }
+
     // Draw crop area overlay
     if (croppingState) {
       const { cropBox, originalElement } = croppingState;
@@ -3651,6 +4324,29 @@ const ImageEditorPage: React.FC = () => {
           } else {
             drawElement(ctx, element);
           }
+
+          // 添加@hover效果
+          if (hoveredElementId === element.id) {
+            ctx.save();
+            ctx.strokeStyle = '#3b82f6'; // 蓝色边框
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]); // 虚线
+            ctx.strokeRect(element.x - 2, element.y - 2, element.width + 4, element.height + 4);
+
+            // 添加半透明蓝色背景
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
+            ctx.fillRect(element.x - 2, element.y - 2, element.width + 4, element.height + 4);
+
+            // 添加提示文字
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            const textX = element.x + element.width / 2;
+            const textY = element.y - 10;
+            ctx.fillText('@可引用此元素', textX, textY);
+
+            ctx.restore();
+          }
         });
         
         ctx.restore();
@@ -3665,7 +4361,7 @@ const ImageEditorPage: React.FC = () => {
         cancelAnimationFrame(animationId);
       };
     }
-  }, [currentElements, canvasSize, pan, zoom, croppingState, editingTextId]);
+  }, [currentElements, canvasSize, pan, zoom, croppingState, editingTextId, hoveredElementId, atMentionedElements]);
 
   return (
     <div className="h-screen bg-gray-900 text-white relative overflow-hidden" style={{ backgroundColor: 'var(--ui-bg-color)' }}>
@@ -4085,6 +4781,26 @@ const ImageEditorPage: React.FC = () => {
                   </>
                 )}
 
+                {/* 下载按钮 - 仅视频且已生成 */}
+                {selectedElement.type === 'video' && (selectedElement as VideoElement).videoUrl && (
+                  <button
+                    title={t('contextMenu.download')}
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.download = 'video.mp4';
+                      link.href = (selectedElement as VideoElement).videoUrl || '';
+                      link.click();
+                    }}
+                    className="p-2 rounded hover:bg-gray-100 text-gray-700"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                  </button>
+                )}
+
                 {/* 删除按钮 */}
                 <button
                   title={t('contextMenu.delete')}
@@ -4132,7 +4848,7 @@ const ImageEditorPage: React.FC = () => {
         {elements.filter(el => el.type === 'video' && (el as VideoElement).videoUrl).map(el => {
           const videoEl = el as VideoElement;
           // 计算按钮在屏幕上的位置（视频中心）- 使用 elements 以实时跟随拖动
-          const buttonSize = 36;
+          const buttonSize = 44;
           // 位置计算：视频中心
           const screenX = pan.x + (videoEl.x + videoEl.width / 2 - buttonSize / zoom / 2) * zoom;
           const screenY = pan.y + (videoEl.y + videoEl.height / 2 - buttonSize / zoom / 2) * zoom;
@@ -4142,6 +4858,10 @@ const ImageEditorPage: React.FC = () => {
           const videoScreenY = pan.y + videoEl.y * zoom;
           const videoScreenWidth = videoEl.width * zoom;
           const videoScreenHeight = videoEl.height * zoom;
+
+          // 根据元素在数组中的顺序计算z-index，后面的元素z-index更高
+          const elementIndex = elements.indexOf(el);
+          const baseZIndex = 5 + elementIndex;
           
           // 播放/暂停处理函数
           const handlePlayPause = (e: React.MouseEvent) => {
@@ -4241,32 +4961,44 @@ const ImageEditorPage: React.FC = () => {
                   top: videoScreenY,
                   width: videoScreenWidth,
                   height: videoScreenHeight,
-                  zIndex: 5,
+                  zIndex: baseZIndex,
                   pointerEvents: 'none', // 不阻止鼠标事件，让事件传递到下层canvas
                 }}
                 onMouseEnter={() => setHoveredVideoId(videoEl.id)}
                 onMouseLeave={() => setHoveredVideoId(null)}
               />
               
-              {/* 播放/暂停按钮 - 只在需要时显示，不阻止视频选中 */}
+              {/* 播放/暂停按钮 - Apple 玻璃拟态风格 */}
               {shouldShowButton && (
                 <button
-                  className="absolute flex items-center justify-center rounded-full bg-white/90 hover:bg-white shadow-lg hover:scale-110"
+                  className="absolute flex items-center justify-center rounded-full"
                   style={{
                     left: screenX,
                     top: screenY,
-                    width: Math.max(buttonSize, 28),
-                    height: Math.max(buttonSize, 28),
-                    zIndex: 6,
-                    transition: 'transform 0.15s, background-color 0.15s, opacity 0.2s',
-                    opacity: videoEl.isPlaying ? 0.9 : 1,
-                    pointerEvents: 'auto', // 只有按钮本身可以接收事件
+                    width: Math.max(buttonSize, 36),
+                    height: Math.max(buttonSize, 36),
+                    zIndex: baseZIndex + 1,
+                    transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s, box-shadow 0.2s',
+                    opacity: videoEl.isPlaying ? 0.85 : 1,
+                    pointerEvents: 'auto',
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.1) 100%)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    boxShadow: '0 4px 30px rgba(0,0,0,0.15), inset 0 1px 1px rgba(255,255,255,0.4)',
                   }}
                   onMouseDown={(e) => {
-                    // 只阻止冒泡，不阻止默认行为
                     e.stopPropagation();
                   }}
-                  onMouseEnter={() => setHoveredVideoId(videoEl.id)}
+                  onMouseEnter={(e) => {
+                    setHoveredVideoId(videoEl.id);
+                    (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.12)';
+                    (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 8px 40px rgba(0,0,0,0.25), inset 0 1px 1px rgba(255,255,255,0.5)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
+                    (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 30px rgba(0,0,0,0.15), inset 0 1px 1px rgba(255,255,255,0.4)';
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     handlePlayPause(e);
@@ -4275,13 +5007,13 @@ const ImageEditorPage: React.FC = () => {
                 >
                   {videoEl.isPlaying ? (
                     // 暂停图标
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-gray-800">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-white drop-shadow-sm">
                       <rect x="6" y="4" width="4" height="16" rx="1" />
                       <rect x="14" y="4" width="4" height="16" rx="1" />
                     </svg>
                   ) : (
                     // 播放图标
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-gray-800 ml-0.5">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-white drop-shadow-sm ml-0.5">
                       <path d="M8 5v14l11-7z" />
                     </svg>
                   )}
@@ -4411,6 +5143,7 @@ const ImageEditorPage: React.FC = () => {
               {/* 生图/生视频选择按钮 */}
               <div className="flex gap-2">
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setGenerateMode('image')}
                   className={`px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
                     generateMode === 'image'
@@ -4428,6 +5161,7 @@ const ImageEditorPage: React.FC = () => {
                   </div>
                 </button>
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setGenerateMode('video')}
                   className={`px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
                     generateMode === 'video'
@@ -4448,6 +5182,7 @@ const ImageEditorPage: React.FC = () => {
               {/* 模型选择下拉菜单 */}
               <div className="relative" ref={modelDropdownRef}>
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setShowModelDropdown(!showModelDropdown)}
                   className="bg-black/30 backdrop-blur-2xl border border-white/10 rounded-xl px-3 py-2 flex items-center gap-2 hover:bg-black/40 transition-colors"
                 >
@@ -4478,6 +5213,7 @@ const ImageEditorPage: React.FC = () => {
                       {(generateMode === 'video' ? videoModels : models).map((model) => (
                         <button
                           key={model.id}
+                          onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
                             if (generateMode === 'video') {
                               setSelectedVideoModel(model.modelName);
@@ -4549,13 +5285,99 @@ const ImageEditorPage: React.FC = () => {
                 />
 
                 {/* 输入框 */}
-                <div className="flex-1">
+                <div className="flex-1 relative">
+                  {/* 高亮显示层 - z-10 置于 textarea 之上，以便 @tag 可点击 */}
+                  <div
+                    className="absolute inset-0 px-3 py-3 text-base leading-relaxed pointer-events-none whitespace-pre-wrap break-words overflow-hidden text-white"
+                    style={{
+                      minHeight: isInputFocused ? '100px' : '44px',
+                      maxHeight: isInputFocused ? '200px' : '120px',
+                      zIndex: 2
+                    }}
+                  >
+                    {prompt.split(/(@(?:图片|视频)\d+)/g).map((part, index) => {
+                      if (part.startsWith('@') && (part.includes('图片') || part.includes('视频'))) {
+                        return (
+                          <span
+                            key={index}
+                            className="text-blue-400 bg-blue-500/20 rounded cursor-pointer hover:bg-blue-500/40 transition-colors pointer-events-auto"
+                            style={{ boxDecorationBreak: 'clone' }}
+                            onMouseDown={(e) => {
+                              e.preventDefault(); // 阻止textarea失焦，防止输入框缩进
+                              e.stopPropagation();
+                              // 从 atMentionedElements 中找到对应的元素
+                              const mentioned = atMentionedElements.find(m => m.tag === part);
+                              if (mentioned) {
+                                // 在画布上找到对应的元素
+                                const canvasElement = currentElements.find(el =>
+                                  (el.type === mentioned.type) &&
+                                  ((el as any).href === mentioned.src || (el as any).src === mentioned.src)
+                                );
+                                if (canvasElement) {
+                                  setHoveredElementId(canvasElement.id);
+                                  // 3秒后自动取消高亮
+                                  setTimeout(() => setHoveredElementId(null), 3000);
+                                }
+                              }
+                            }}
+                          >
+                            {part}
+                          </span>
+                        );
+                      }
+                      return <span key={index}>{part}</span>;
+                    })}
+                  </div>
+
+                  {/* 实际输入框 */}
                   <textarea
                     value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
+                    onChange={(e) => {
+                      setPrompt(e.target.value);
+                      const cursorPos = e.target.selectionStart || 0;
+                      setAtCursorPosition(cursorPos);
+                      atCursorPositionRef.current = cursorPos;
+                      handleAtInput(e.target.value, cursorPos);
+                    }}
                     onFocus={() => setIsInputFocused(true)}
-                    onBlur={() => setIsInputFocused(false)}
+                    onBlur={() => {
+                      // 延迟隐藏建议，允许点击选择
+                      setTimeout(() => setShowAtSuggestions(false), 200);
+                      setIsInputFocused(false);
+                    }}
                     onKeyDown={(e) => {
+                      if (showAtSuggestions && atSuggestions.length > 0) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSelectedSuggestionIndex(prev =>
+                            prev < atSuggestions.length - 1 ? prev + 1 : 0
+                          );
+                          return;
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSelectedSuggestionIndex(prev =>
+                            prev > 0 ? prev - 1 : atSuggestions.length - 1
+                          );
+                          return;
+                        } else if (e.key === 'Enter' && selectedSuggestionIndex >= 0) {
+                          e.preventDefault();
+                          const selectedElement = atSuggestions[selectedSuggestionIndex];
+                          const cursorPos = e.currentTarget.selectionStart || prompt.length;
+                          const result = selectAtSuggestion(selectedElement, prompt, cursorPos);
+                          setPrompt(result.newPrompt);
+                          // 移动光标到新位置
+                          const textarea = e.currentTarget;
+                          setTimeout(() => {
+                            textarea.setSelectionRange(result.newCursorPos, result.newCursorPos);
+                          }, 0);
+                          return;
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setShowAtSuggestions(false);
+                          setSelectedSuggestionIndex(-1);
+                          return;
+                        }
+                      }
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         if (generateMode === 'video') {
@@ -4574,23 +5396,120 @@ const ImageEditorPage: React.FC = () => {
                     }}
                     placeholder={
                       generateMode === 'video'
-                        ? "描述您想要生成的视频内容..."
+                        ? "描述您想要生成的视频内容...（@图像生成视频）"
                         : currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length > 0
-                          ? "描述您想要如何编辑选中的图片..."
-                          : "描述您想要生成的图像..."
+                          ? "描述您想要如何编辑选中的图片...（@图像生成图片）"
+                          : "描述您想要生成的图像...（@图像生成图片）"
                     }
-                    className="w-full bg-transparent border-none text-white placeholder-white/40 resize-none focus:outline-none text-base leading-relaxed px-2 py-2 transition-all duration-200"
+                    className="w-full bg-transparent border-none text-transparent placeholder-white/40 resize-none focus:outline-none text-base leading-relaxed px-3 py-3 transition-all duration-200 caret-white"
                     rows={isInputFocused ? 5 : 2}
-                    style={{ 
-                      minHeight: isInputFocused ? '100px' : '44px', 
-                      maxHeight: isInputFocused ? '200px' : '120px' 
+                    style={{
+                      minHeight: isInputFocused ? '100px' : '44px',
+                      maxHeight: isInputFocused ? '200px' : '120px',
+                      position: 'relative',
+                      zIndex: 1
                     }}
                   />
+
+                  {/* @建议列表 */}
+                  {showAtSuggestions && atSuggestions.length > 0 && (
+                    <div 
+                      className="absolute bottom-full left-0 right-0 bg-gray-800 border border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50 mb-2"
+                      ref={(container) => {
+                        // 当选中项改变时，自动滚动到选中项
+                        if (container && selectedSuggestionIndex >= 0) {
+                          const selectedItem = container.children[selectedSuggestionIndex] as HTMLElement;
+                          if (selectedItem) {
+                            const containerRect = container.getBoundingClientRect();
+                            const itemRect = selectedItem.getBoundingClientRect();
+                            
+                            // 检查选中项是否在可视区域内
+                            const isAboveView = itemRect.top < containerRect.top;
+                            const isBelowView = itemRect.bottom > containerRect.bottom;
+                            
+                            if (isAboveView) {
+                              // 选中项在可视区域上方，滚动到顶部
+                              selectedItem.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                            } else if (isBelowView) {
+                              // 选中项在可视区域下方，滚动到底部
+                              selectedItem.scrollIntoView({ block: 'end', behavior: 'smooth' });
+                            }
+                          }
+                        }
+                      }}
+                    >
+                      {atSuggestions.map((element, index) => (
+                        <div
+                          key={`${element.id}-${index}`}
+                          className={`flex items-center gap-3 p-3 cursor-pointer border-b border-gray-700 last:border-b-0 ${
+                            selectedSuggestionIndex === index
+                              ? 'bg-blue-600 text-white'
+                              : 'hover:bg-gray-700 text-white'
+                          }`}
+                          onMouseEnter={() => {
+                            // 找到画布上对应的元素并设置hover状态
+                            const canvasElement = currentElements.find(el =>
+                              el.type === element.type &&
+                              (el.src === element.src || (el as any).href === element.src)
+                            );
+                            if (canvasElement) {
+                              setHoveredElementId(canvasElement.id);
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            setHoveredElementId(null);
+                          }}
+                          onMouseDown={(e) => {
+                            // 使用 mouseDown 而非 click，避免 textarea blur 导致 cursorPos 丢失
+                            e.preventDefault(); // 阻止 textarea 失焦
+                            const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+                            if (textarea) {
+                              const cursorPos = atCursorPositionRef.current || textarea.selectionStart || prompt.length;
+                              const result = selectAtSuggestion(element, prompt, cursorPos);
+                              setPrompt(result.newPrompt);
+                              textarea.focus();
+                              // 移动光标到标签后面（而不是末尾）
+                              setTimeout(() => {
+                                textarea.setSelectionRange(result.newCursorPos, result.newCursorPos);
+                              }, 0);
+                            }
+                          }}
+                        >
+                          {element.type === 'image' ? (
+                            <img
+                              src={element.src}
+                              alt={element.alt || 'Image'}
+                              className="w-8 h-8 object-cover rounded flex-shrink-0"
+                              onError={(e) => {
+                                // 如果图片加载失败，显示占位符
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSIjMzc0MTUxIi8+CjxwYXRoIGQ9Ik0xNSAxMi41YzAtLjgzLS42NzctMS41LTEuNS0xLjVzLTEuNS42NzctMS41IDEuNS42NzcgMS41IDEuNSAxLjUgMS41LS42NzcgMS41LTEuNXoiIGZpbGw9IiM2MzY2RjEiLz4KPHBhdGggZD0iTTE5IDl2NmMwIDEuMS0uOSAyLTIgMkg3Yy0xLjEgMC0yLS45LTItMlY5YzAtLjU1LjQ1LTEgMS0xSDQuNWMuMjcgMCAuNS4yMi41LjVsLjAyLjAyTDYuNSA5SDl2NmgyVjloMnptLTMgNWMwIC41NS0uNDUgMS0xIDFIMTFjLS41NSAwLTEtLjQ1LTEtMVYxMGMwLS41NS40NS0xIDEtMWgzYzAuNTUgMCAxIC40NSAxIDF2MXoiIGZpbGw9IiM2MzY2RjEiLz4KPC9zdmc+';
+                              }}
+                            />
+                          ) : (
+                            <video
+                              src={element.src}
+                              className="w-8 h-8 object-cover rounded flex-shrink-0"
+                              muted
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-white text-sm font-medium truncate">
+                              {element.type === 'image' ? '图片' : '视频'} {element.listIndex}
+                            </div>
+                            <div className="text-gray-400 text-xs truncate">
+                              {element.alt || element.src.substring(0, 50) + '...'}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* 保存我的prompt按钮 - 仅当有输入内容时显示 */}
                 {prompt.trim() && !isGenerating && (
                   <button
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       const name = window.prompt(t('myEffects.saveEffectPrompt') || '请输入效果名称', t('myEffects.defaultName') || '我的效果');
                       if (name && prompt.trim()) {
@@ -4608,6 +5527,7 @@ const ImageEditorPage: React.FC = () => {
 
                 {/* 生成/编辑按钮 */}
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     if (generateMode === 'video') {
                       // 生视频模式

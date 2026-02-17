@@ -3,6 +3,7 @@ import { Loader2, Video, Image as ImageIcon, LayoutGrid, Sparkles, AlertCircle, 
 import type { VideoGenProject, Shot, Keyframe } from '../../types/videogen';
 import { generateImage, generateVideo, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, uploadFileToOss } from '../../services/videogenService';
 import { modelApi, ModelInfo } from '../../services/modelApi';
+import { chatApi } from '../../services/chatApi';
 
 interface Props {
   project: VideoGenProject;
@@ -100,6 +101,20 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
   const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [libraryType, setLibraryType] = useState<'start' | 'end' | 'video'>('start');
   const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
+  const [playingVideos, setPlayingVideos] = useState<Set<string>>(new Set()); // 跟踪正在播放的视频ID
+  
+  // 跨项目资源 Tab 状态
+  const [projectTabs, setProjectTabs] = useState<{ id: string; sessionId: string; title: string }[]>([]);
+  const [activeLibraryTabId, setActiveLibraryTabId] = useState<string>('local'); // 'local' = 本地资源库
+  const [crossProjectAssets, setCrossProjectAssets] = useState<Array<{
+    type: 'image' | 'video';
+    url: string;
+    thumbnailUrl?: string;
+    prompt?: string;
+    source: string;
+  }>>([]);
+  const [loadingCrossAssets, setLoadingCrossAssets] = useState(false);
+  const [loadingProjectTabs, setLoadingProjectTabs] = useState(false); // 加载项目 tabs 的状态
   
   // 视频模型选择
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
@@ -2263,6 +2278,8 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
   const handleOpenLibraryForKeyframe = async (type: 'start' | 'end') => {
     setLibraryType(type);
     setShowLibraryModal(true);
+    setActiveLibraryTabId('local'); // 重置为本地资源库
+    setProjectTabs([]); // 重置项目 tabs
     
     try {
       // 获取所有场景类型的资源（纯图片）
@@ -2277,6 +2294,30 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       const allAssets = [...sceneAssets, ...videoAssets];
       
       setLibraryAssets(allAssets);
+      
+      // 加载所有视频工作室项目作为 tabs
+      const userId = localStorage.getItem('userId');
+      if (userId) {
+        setLoadingProjectTabs(true);
+        try {
+          const response = await chatApi.getSessionList(userId, 'mcpx-video-studio');
+          if (response.code === 200) {
+            const sessions = (response.rows || response.data || []) as any[];
+            // 过滤掉当前项目
+            const otherProjects = sessions
+              .filter((s: any) => s.id !== project.sessionId)
+              .map((s: any) => ({
+                id: s.id,
+                sessionId: s.id,
+                title: s.sessionTitle || '未命名项目'
+              }));
+            setProjectTabs(otherProjects);
+            console.log('✅ 加载了', otherProjects.length, '个其他项目');
+          }
+        } finally {
+          setLoadingProjectTabs(false);
+        }
+      }
     } catch (error: any) {
       console.error('加载资源库失败:', error);
       if (error.name === 'NotFoundError' || error.message?.includes('object stores')) {
@@ -2400,11 +2441,37 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
   const handleOpenVideoLibrary = async () => {
     setLibraryType('video');
     setShowLibraryModal(true);
+    setActiveLibraryTabId('local'); // 重置为本地资源库
+    setProjectTabs([]); // 重置项目 tabs
     
     try {
       // 只获取视频类型的资源
       const assets = await getAssetsFromLibrary('video');
       setLibraryAssets(assets);
+      
+      // 加载所有视频工作室项目作为 tabs
+      const userId = localStorage.getItem('userId');
+      if (userId) {
+        setLoadingProjectTabs(true);
+        try {
+          const response = await chatApi.getSessionList(userId, 'mcpx-video-studio');
+          if (response.code === 200) {
+            const sessions = (response.rows || response.data || []) as any[];
+            // 过滤掉当前项目
+            const otherProjects = sessions
+              .filter((s: any) => s.id !== project.sessionId)
+              .map((s: any) => ({
+                id: s.id,
+                sessionId: s.id,
+                title: s.sessionTitle || '未命名项目'
+              }));
+            setProjectTabs(otherProjects);
+            console.log('✅ 加载了', otherProjects.length, '个其他项目');
+          }
+        } finally {
+          setLoadingProjectTabs(false);
+        }
+      }
     } catch (error: any) {
       console.error('加载视频资源库失败:', error);
       if (error.name === 'NotFoundError' || error.message?.includes('object stores')) {
@@ -2413,6 +2480,129 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       } else {
         alert(`加载视频资源库失败: ${error.message || '未知错误'}`);
       }
+    }
+  };
+
+  // 加载跨项目资源
+  const loadCrossProjectAssets = async (sessionId: string) => {
+    setLoadingCrossAssets(true);
+    setCrossProjectAssets([]);
+    
+    try {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        throw new Error('用户未登录');
+      }
+
+      // 获取该项目的聊天记录
+      const response = await chatApi.getChatList({ sessionId, userId });
+      if (response.code !== 200) {
+        throw new Error('加载项目数据失败');
+      }
+
+      const messages = (response.rows || response.data || []) as any[];
+      const assets: Array<{
+        type: 'image' | 'video';
+        url: string;
+        thumbnailUrl?: string;
+        prompt?: string;
+        source: string;
+      }> = [];
+
+      // 从消息中提取图片和视频 URL
+      const urlRegex = /(https?:\/\/[^\s<>"]+?\.(jpg|jpeg|png|gif|webp|mp4|mov|avi))/gi;
+      
+      messages.forEach((msg: any) => {
+        if (msg.content) {
+          const matches = msg.content.matchAll(urlRegex);
+          for (const match of matches) {
+            const url = match[1];
+            const ext = match[2].toLowerCase();
+            const isVideo = ['mp4', 'mov', 'avi'].includes(ext);
+            
+            assets.push({
+              type: isVideo ? 'video' : 'image',
+              url: url,
+              source: `消息 #${msg.id?.slice(0, 8) || 'unknown'}`,
+              prompt: msg.content.substring(0, 100)
+            });
+          }
+        }
+      });
+
+      // 尝试从 sessionContent 解析项目数据
+      const session = await chatApi.getSessionList(userId, 'mcpx-video-studio');
+      if (session.code === 200) {
+        const sessions = (session.rows || session.data || []) as any[];
+        const targetSession = sessions.find((s: any) => s.id === sessionId);
+        if (targetSession?.sessionContent) {
+          try {
+            const projectData = JSON.parse(targetSession.sessionContent);
+            
+            // 提取关键帧图片
+            if (projectData.shots) {
+              projectData.shots.forEach((shot: any, index: number) => {
+                if (shot.keyframes) {
+                  shot.keyframes.forEach((kf: any) => {
+                    if (kf.imageUrl) {
+                      assets.push({
+                        type: 'image',
+                        url: kf.imageUrl,
+                        source: `镜头${index + 1} ${kf.type === 'start' ? '起始帧' : '结束帧'}`,
+                        prompt: kf.visualPrompt
+                      });
+                    }
+                  });
+                }
+                
+                // 提取视频
+                if (shot.interval?.videoUrl) {
+                  const startKf = shot.keyframes?.find((k: any) => k.type === 'start');
+                  assets.push({
+                    type: 'video',
+                    url: shot.interval.videoUrl,
+                    thumbnailUrl: startKf?.imageUrl,
+                    source: `镜头${index + 1} 视频`,
+                    prompt: shot.actionSummary
+                  });
+                }
+              });
+            }
+          } catch (parseError) {
+            console.warn('解析项目数据失败:', parseError);
+          }
+        }
+      }
+
+      // 去重
+      const uniqueAssets = assets.filter((asset, index, self) =>
+        index === self.findIndex((a) => a.url === asset.url)
+      );
+
+      console.log('✅ 加载到', uniqueAssets.length, '个跨项目资源');
+      setCrossProjectAssets(uniqueAssets);
+    } catch (error: any) {
+      console.error('加载跨项目资源失败:', error);
+      alert(`加载失败: ${error.message || '未知错误'}`);
+    } finally {
+      setLoadingCrossAssets(false);
+    }
+  };
+
+  // 当切换资源库 Tab 时
+  const handleLibraryTabChange = (tabId: string) => {
+    setActiveLibraryTabId(tabId);
+    setPlayingVideos(new Set()); // 切换 tab 时清空播放状态
+    
+    if (tabId === 'local') {
+      // 切换回本地资源库，不需要额外操作
+      return;
+    }
+    
+    // 切换到某个项目，加载该项目的资源
+    const tab = projectTabs.find(t => t.id === tabId);
+    if (tab?.sessionId) {
+      loadCrossProjectAssets(tab.sessionId);
     }
   };
 
@@ -3588,8 +3778,8 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
 
       {/* Asset Library Modal */}
       {showLibraryModal && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-8 animate-in fade-in duration-200">
-          <div className="bg-[#141414] border border-zinc-800 w-full max-w-5xl max-h-[90vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#141414] border border-zinc-800 w-full max-w-7xl max-h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden">
             {/* Modal Header */}
             <div className="h-16 px-8 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-[#1A1A1A]">
               <div className="flex items-center gap-4">
@@ -3600,130 +3790,474 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                   </h3>
                   <p className="text-xs text-zinc-500 font-mono uppercase tracking-wider">
                     {libraryType === 'video' 
-                      ? `视频库 - ${libraryAssets.length} 个视频` 
-                      : `${libraryType === 'start' ? '起始帧' : '结束帧'} - ${libraryAssets.length} 个资源`
+                      ? '视频库' 
+                      : `${libraryType === 'start' ? '起始帧' : '结束帧'}`
                     }
                   </p>
                 </div>
               </div>
               <button 
-                onClick={() => setShowLibraryModal(false)} 
+                onClick={() => {
+                  setShowLibraryModal(false);
+                  setActiveLibraryTabId('local');
+                  setCrossProjectAssets([]);
+                  setPlayingVideos(new Set()); // 清空播放状态
+                }} 
                 className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
               >
                 <X className="w-5 h-5 text-zinc-500" />
               </button>
             </div>
             
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-8">
-              {libraryAssets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                  <Database className="w-16 h-16 mb-4 opacity-20" />
-                  <p className="text-sm">资源库为空</p>
-                  <p className="text-xs mt-2">
-                    {libraryType === 'video' ? '生成视频后，可以添加到资源库' : '生成关键帧或视频后，可以添加到资源库'}
-                  </p>
+            {/* Tabs inside Modal */}
+            <div className="border-b border-zinc-800 bg-[#161616] px-6 flex items-center gap-0 shrink-0 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
+              <button
+                onClick={() => handleLibraryTabChange('local')}
+                className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider whitespace-nowrap border-b-2 transition-colors ${
+                  activeLibraryTabId === 'local'
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                本地资源库
+              </button>
+              
+              {/* 加载项目 tabs 的提示 */}
+              {loadingProjectTabs && (
+                <div className="px-4 py-2.5 flex items-center gap-2 text-zinc-500">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span className="text-xs">加载其他项目...</span>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {libraryAssets.map((asset) => {
-                    // 根据选择类型确定显示的图片
-                    let displayImageUrl = asset.imageUrl;
-                    if (libraryType !== 'video' && asset.type === 'video') {
-                      // 如果是关键帧选择模式且资源是视频，显示对应的帧
-                      if (libraryType === 'start') {
-                        displayImageUrl = asset.startFrameUrl || asset.imageUrl;
-                      } else if (libraryType === 'end') {
-                        displayImageUrl = asset.endFrameUrl || asset.imageUrl;
+              )}
+              
+              {/* 项目 tabs */}
+              {!loadingProjectTabs && projectTabs.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleLibraryTabChange(tab.id)}
+                  className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors max-w-[160px] truncate ${
+                    activeLibraryTabId === tab.id
+                      ? 'border-indigo-500 text-white'
+                      : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                  }`}
+                  title={tab.title}
+                >
+                  {tab.title}
+                </button>
+              ))}
+              
+              {/* 没有其他项目的提示 */}
+              {!loadingProjectTabs && projectTabs.length === 0 && (
+                <div className="px-4 py-2.5 text-xs text-zinc-600 italic">
+                  暂无其他项目
+                </div>
+              )}
+            </div>
+            
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-8 min-h-[500px]">
+              {activeLibraryTabId === 'local' ? (
+                // 本地资源库视图
+                libraryAssets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full min-h-[450px] text-zinc-500">
+                    <Database className="w-16 h-16 mb-4 opacity-20" />
+                    <p className="text-sm">资源库为空</p>
+                    <p className="text-xs mt-2">
+                      {libraryType === 'video' ? '生成视频后，可以添加到资源库' : '生成关键帧或视频后，可以添加到资源库'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {libraryAssets.map((asset) => {
+                      // 根据选择类型确定显示的图片
+                      let displayImageUrl = asset.imageUrl;
+                      if (libraryType !== 'video' && asset.type === 'video') {
+                        // 如果是关键帧选择模式且资源是视频，显示对应的帧
+                        if (libraryType === 'start') {
+                          displayImageUrl = asset.startFrameUrl || asset.imageUrl;
+                        } else if (libraryType === 'end') {
+                          displayImageUrl = asset.endFrameUrl || asset.imageUrl;
+                        }
                       }
-                    }
-                    
-                    return (
-                    <div 
-                      key={asset.id} 
-                      className="bg-[#0A0A0A] border border-zinc-800 rounded-xl overflow-hidden group hover:border-indigo-500 transition-all cursor-pointer"
-                      onClick={() => libraryType === 'video' ? handleSelectVideoFromLibrary(asset) : handleSelectKeyframeFromLibrary(asset)}
-                    >
-                      <div className="aspect-video bg-zinc-900 relative">
-                        <img src={displayImageUrl} alt={asset.name} className="w-full h-full object-cover" />
-                        {/* Video indicator overlay */}
-                        {asset.type === 'video' && (
-                          <div className="absolute top-2 left-2">
-                            <div className="px-2 py-1 rounded bg-purple-500/90 backdrop-blur-sm flex items-center gap-1 border border-white/20">
-                              <Film className="w-3 h-3 text-white" />
-                              <span className="text-[9px] text-white font-bold uppercase">视频</span>
-                            </div>
-                          </div>
-                        )}
-                        {/* Frame type indicator for video assets in keyframe selection mode */}
-                        {libraryType !== 'video' && asset.type === 'video' && (
-                          <div className="absolute top-2 right-2">
-                            <div className="px-2 py-1 rounded bg-indigo-500/90 backdrop-blur-sm border border-white/20">
-                              <span className="text-[9px] text-white font-bold uppercase">
-                                {libraryType === 'start' ? '起始帧' : '结束帧'}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
-                          <div className="text-center">
-                            <Check className="w-8 h-8 text-white mx-auto mb-2" />
-                            <p className="text-white text-sm font-bold">选择此资源</p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (asset.id) handleDeleteFromLibrary(asset.id);
-                          }}
-                          className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                          title="从资源库删除"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                      <div className="p-3 border-t border-zinc-800">
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="font-bold text-zinc-200 text-sm truncate flex-1 mr-2" title={asset.name}>{asset.name}</h4>
+                      
+                      return (
+                      <div 
+                        key={asset.id} 
+                        className={`bg-[#0A0A0A] rounded-xl overflow-hidden group transition-all ${
+                          libraryType === 'video' && asset.type === 'video'
+                            ? 'border-2 border-emerald-700 hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/30'
+                            : 'border border-zinc-800 hover:border-indigo-500 cursor-pointer'
+                        }`}
+                        onClick={(e) => {
+                          // 如果是视频模式且是视频资源，不在卡片级别处理点击
+                          if (libraryType === 'video' && asset.type === 'video') {
+                            return;
+                          }
+                          // 否则正常处理选择
+                          libraryType === 'video' ? handleSelectVideoFromLibrary(asset) : handleSelectKeyframeFromLibrary(asset);
+                        }}
+                      >
+                        <div className="aspect-video bg-zinc-900 relative group/videocard">
+                          {/* 如果是视频选择模式且资源是视频 */}
+                          {libraryType === 'video' && asset.type === 'video' && asset.videoUrl ? (
+                            playingVideos.has(asset.id?.toString() || asset.videoUrl) ? (
+                              // 用户点击播放后，显示视频播放器
+                              <video
+                                src={asset.videoUrl}
+                                poster={displayImageUrl}
+                                controls
+                                autoPlay
+                                preload="auto"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              // 默认显示首帧图片，点击后加载视频
+                              <>
+                                {displayImageUrl ? (
+                                  <img 
+                                    src={displayImageUrl} 
+                                    alt={asset.name} 
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      // 图片加载失败时显示默认占位图
+                                      e.currentTarget.style.display = 'none';
+                                      const parent = e.currentTarget.parentElement;
+                                      if (parent) {
+                                        const placeholder = parent.querySelector('.video-placeholder');
+                                        if (placeholder) {
+                                          (placeholder as HTMLElement).style.display = 'flex';
+                                        }
+                                      }
+                                    }}
+                                  />
+                                ) : null}
+                                {/* 默认占位图 */}
+                                <div className="video-placeholder absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-900 flex flex-col items-center justify-center" style={{ display: displayImageUrl ? 'none' : 'flex' }}>
+                                  <Film className="w-16 h-16 text-zinc-600 mb-3" />
+                                  <p className="text-zinc-500 text-sm font-medium">视频预览</p>
+                                  <p className="text-zinc-600 text-xs mt-1">点击播放</p>
+                                </div>
+                                {/* 播放按钮覆盖层 */}
+                                <div 
+                                  className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors cursor-pointer z-10"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPlayingVideos(prev => new Set(prev).add(asset.id?.toString() || asset.videoUrl));
+                                  }}
+                                >
+                                  <div className="bg-white/90 hover:bg-white rounded-full p-4 shadow-2xl transition-all transform hover:scale-110">
+                                    <svg className="w-8 h-8 text-zinc-900" fill="currentColor" viewBox="0 0 24 24">
+                                      <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                  </div>
+                                </div>
+                              </>
+                            )
+                          ) : (
+                            <img src={displayImageUrl} alt={asset.name} className="w-full h-full object-cover" />
+                          )}
+                          
+                          {/* Video indicator overlay */}
                           {asset.type === 'video' && (
-                            <span className="px-1.5 py-0.5 bg-purple-900/50 text-purple-300 text-[9px] rounded uppercase font-mono flex items-center gap-1 flex-shrink-0">
-                              <Film className="w-2 h-2" />
-                              VIDEO
-                            </span>
+                            <div className="absolute top-2 left-2 pointer-events-none">
+                              <div className={`px-2.5 py-1.5 rounded-lg backdrop-blur-sm flex items-center gap-1.5 border shadow-lg ${
+                                libraryType === 'video'
+                                  ? 'bg-emerald-500/90 border-white/30 text-white'
+                                  : 'bg-purple-500/90 border-white/20 text-white'
+                              }`}>
+                                <Film className="w-3.5 h-3.5" />
+                                <span className="text-[10px] font-bold uppercase">视频</span>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* 视频选择按钮 - 只在视频模式下显示，放在右上角 */}
+                          {libraryType === 'video' && asset.type === 'video' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectVideoFromLibrary(asset);
+                              }}
+                              className="absolute top-2 right-2 px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-xs shadow-lg hover:shadow-emerald-500/50 transition-all flex items-center gap-1.5 z-20 opacity-0 group-hover:opacity-100"
+                              title="选择此视频"
+                            >
+                              <Check className="w-4 h-4" />
+                              选择
+                            </button>
+                          )}
+                          
+                          {/* Frame type indicator for video assets in keyframe selection mode */}
+                          {libraryType !== 'video' && asset.type === 'video' && (
+                            <div className="absolute top-2 right-2 pointer-events-none">
+                              <div className="px-2 py-1 rounded bg-indigo-500/90 backdrop-blur-sm border border-white/20">
+                                <span className="text-[9px] text-white font-bold uppercase">
+                                  {libraryType === 'start' ? '起始帧' : '结束帧'}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Hover overlay - 只在非视频模式或非视频资源时显示 */}
+                          {!(libraryType === 'video' && asset.type === 'video') && (
+                            <div 
+                              className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center backdrop-blur-sm pointer-events-none"
+                            >
+                              <div className="text-center transform scale-90 group-hover:scale-100 transition-transform">
+                                <div className="bg-indigo-500 rounded-full p-3 mb-3 mx-auto w-fit shadow-lg shadow-indigo-500/50">
+                                  <Check className="w-8 h-8 text-white" />
+                                </div>
+                                <p className="text-white text-base font-bold mb-1">选择此资源</p>
+                                <p className="text-zinc-300 text-xs">点击应用</p>
+                              </div>
+                            </div>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (asset.id) handleDeleteFromLibrary(asset.id);
+                            }}
+                            className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                            title="从资源库删除"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div 
+                          className={`p-3 border-t border-zinc-800 ${
+                            libraryType === 'video' && asset.type === 'video'
+                              ? 'cursor-pointer hover:bg-zinc-800/50 transition-colors'
+                              : ''
+                          }`}
+                          onClick={(e) => {
+                            if (libraryType === 'video' && asset.type === 'video') {
+                              e.stopPropagation();
+                              handleSelectVideoFromLibrary(asset);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <h4 className="font-bold text-zinc-200 text-sm truncate flex-1 mr-2" title={asset.name}>{asset.name}</h4>
+                            {asset.type === 'video' && (
+                              <span className="px-1.5 py-0.5 bg-purple-900/50 text-purple-300 text-[9px] rounded uppercase font-mono flex items-center gap-1 flex-shrink-0">
+                                <Film className="w-2 h-2" />
+                                VIDEO
+                              </span>
+                            )}
+                          </div>
+                          {asset.visualPrompt && (
+                            <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono mb-2">{asset.visualPrompt}</p>
+                          )}
+                          {asset.metadata && (
+                            <div className="flex gap-1 flex-wrap">
+                              {asset.metadata.shotNumber && (
+                                <span className="px-1.5 py-0.5 bg-indigo-900/30 text-indigo-400 text-[9px] rounded font-mono">
+                                  镜头 {asset.metadata.shotNumber}
+                                </span>
+                              )}
+                              {asset.metadata.duration && (
+                                <span className="px-1.5 py-0.5 bg-green-900/30 text-green-400 text-[9px] rounded font-mono">
+                                  {asset.metadata.duration}秒
+                                </span>
+                              )}
+                              {asset.metadata.location && !asset.name.includes(asset.metadata.location) && (
+                                <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded font-mono">
+                                  {asset.metadata.location}
+                                </span>
+                              )}
+                              {asset.metadata.time && (
+                                <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 text-[9px] rounded font-mono flex items-center gap-1">
+                                  <Clock className="w-2 h-2" />
+                                  {asset.metadata.time}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
-                        {asset.visualPrompt && (
-                          <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono mb-2">{asset.visualPrompt}</p>
-                        )}
-                        {asset.metadata && (
-                          <div className="flex gap-1 flex-wrap">
-                            {asset.metadata.shotNumber && (
-                              <span className="px-1.5 py-0.5 bg-indigo-900/30 text-indigo-400 text-[9px] rounded font-mono">
-                                镜头 {asset.metadata.shotNumber}
-                              </span>
-                            )}
-                            {asset.metadata.duration && (
-                              <span className="px-1.5 py-0.5 bg-green-900/30 text-green-400 text-[9px] rounded font-mono">
-                                {asset.metadata.duration}秒
-                              </span>
-                            )}
-                            {asset.metadata.location && !asset.name.includes(asset.metadata.location) && (
-                              <span className="px-1.5 py-0.5 bg-zinc-900 text-zinc-500 text-[9px] rounded font-mono">
-                                {asset.metadata.location}
-                              </span>
-                            )}
-                            {asset.metadata.time && (
-                              <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 text-[9px] rounded font-mono flex items-center gap-1">
-                                <Clock className="w-2 h-2" />
-                                {asset.metadata.time}
-                              </span>
-                            )}
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  )})}
-                </div>
+                    )})}
+                  </div>
+                )
+              ) : (
+                // 跨项目资源视图
+                loadingCrossAssets ? (
+                  <div className="flex flex-col items-center justify-center h-full min-h-[450px] text-zinc-500">
+                    <Loader2 className="w-8 h-8 animate-spin mb-4 text-indigo-500" />
+                    <p className="text-sm">正在加载项目资源...</p>
+                  </div>
+                ) : crossProjectAssets.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full min-h-[450px] text-zinc-500">
+                    <Database className="w-16 h-16 mb-4 opacity-20" />
+                    <p className="text-sm">该项目暂无可用资源</p>
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {/* 图片资源 */}
+                    {crossProjectAssets.filter(a => a.type === 'image').length > 0 && (
+                      <section>
+                        <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
+                          图片资源 ({crossProjectAssets.filter(a => a.type === 'image').length})
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                          {crossProjectAssets.filter(a => a.type === 'image').map((asset, idx) => (
+                            <div 
+                              key={idx} 
+                              className="bg-[#0A0A0A] border border-zinc-800 rounded-xl overflow-hidden group hover:border-indigo-500 transition-all cursor-pointer"
+                              onClick={() => {
+                                // 将跨项目资源转换为 AssetLibraryItem 格式
+                                const assetItem: AssetLibraryItem = {
+                                  type: 'scene',
+                                  name: asset.source,
+                                  imageUrl: asset.url,
+                                  visualPrompt: asset.prompt,
+                                  metadata: {}
+                                };
+                                handleSelectKeyframeFromLibrary(assetItem);
+                              }}
+                            >
+                              <div className="aspect-video bg-zinc-900 relative group/crossitem">
+                                <img src={asset.url} alt={asset.source} className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent opacity-0 group-hover/crossitem:opacity-100 transition-all flex items-center justify-center backdrop-blur-sm">
+                                  <div className="text-center transform scale-90 group-hover/crossitem:scale-100 transition-transform">
+                                    <div className="bg-indigo-500 rounded-full p-3 mb-3 mx-auto w-fit shadow-lg shadow-indigo-500/50">
+                                      <Check className="w-8 h-8 text-white" />
+                                    </div>
+                                    <p className="text-white text-base font-bold mb-1">选择此图片</p>
+                                    <p className="text-zinc-300 text-xs">点击应用到关键帧</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="p-3 border-t border-zinc-800">
+                                <h4 className="font-bold text-zinc-200 text-sm truncate mb-1">{asset.source}</h4>
+                                {asset.prompt && (
+                                  <p className="text-[9px] text-zinc-500 line-clamp-2 font-mono">{asset.prompt}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {/* 视频资源 */}
+                    {crossProjectAssets.filter(a => a.type === 'video').length > 0 && (
+                      <section>
+                        <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2 mb-4">
+                          <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                          视频资源 ({crossProjectAssets.filter(a => a.type === 'video').length})
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {crossProjectAssets.filter(a => a.type === 'video').map((asset, idx) => (
+                            <div 
+                              key={idx} 
+                              className="bg-[#0A0A0A] border-2 border-zinc-800 rounded-xl overflow-hidden group hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/20 transition-all"
+                            >
+                              <div className="aspect-video bg-zinc-900 relative group/crossvideo">
+                                {playingVideos.has(asset.url) ? (
+                                  // 用户点击播放后，显示视频播放器
+                                  <video
+                                    src={asset.url}
+                                    poster={asset.thumbnailUrl}
+                                    controls
+                                    autoPlay
+                                    preload="auto"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  // 默认显示首帧图片，点击后加载视频
+                                  <>
+                                    {asset.thumbnailUrl ? (
+                                      <img 
+                                        src={asset.thumbnailUrl} 
+                                        alt={asset.source} 
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                          // 图片加载失败时显示默认占位图
+                                          e.currentTarget.style.display = 'none';
+                                          const parent = e.currentTarget.parentElement;
+                                          if (parent) {
+                                            const placeholder = parent.querySelector('.video-placeholder');
+                                            if (placeholder) {
+                                              (placeholder as HTMLElement).style.display = 'flex';
+                                            }
+                                          }
+                                        }}
+                                      />
+                                    ) : null}
+                                    {/* 默认占位图 */}
+                                    <div className="video-placeholder absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-900 flex flex-col items-center justify-center" style={{ display: asset.thumbnailUrl ? 'none' : 'flex' }}>
+                                      <Film className="w-16 h-16 text-zinc-600 mb-3" />
+                                      <p className="text-zinc-500 text-sm font-medium">视频预览</p>
+                                      <p className="text-zinc-600 text-xs mt-1">点击播放</p>
+                                    </div>
+                                    {/* 播放按钮覆盖层 */}
+                                    <div 
+                                      className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors cursor-pointer z-10"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPlayingVideos(prev => new Set(prev).add(asset.url));
+                                      }}
+                                    >
+                                      <div className="bg-white/90 hover:bg-white rounded-full p-4 shadow-2xl transition-all transform hover:scale-110">
+                                        <svg className="w-8 h-8 text-zinc-900" fill="currentColor" viewBox="0 0 24 24">
+                                          <path d="M8 5v14l11-7z" />
+                                        </svg>
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                                <div className="absolute top-2 left-2 px-2.5 py-1.5 bg-emerald-500/90 backdrop-blur-sm rounded-lg text-xs text-white font-bold uppercase border border-white/30 flex items-center gap-1.5 shadow-lg pointer-events-none">
+                                  <Film className="w-4 h-4" /> 视频
+                                </div>
+                                {/* 视频选择按钮 - 放在右上角 */}
+                                <button
+                                  onClick={() => {
+                                    const assetItem: AssetLibraryItem = {
+                                      type: 'video',
+                                      name: asset.source,
+                                      imageUrl: asset.thumbnailUrl || asset.url,
+                                      videoUrl: asset.url,
+                                      visualPrompt: asset.prompt,
+                                      metadata: {}
+                                    };
+                                    handleSelectVideoFromLibrary(assetItem);
+                                  }}
+                                  className="absolute top-2 right-2 px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-xs shadow-lg hover:shadow-emerald-500/50 transition-all flex items-center gap-1.5 z-20 opacity-0 group-hover/crossvideo:opacity-100"
+                                  title="选择此视频"
+                                >
+                                  <Check className="w-4 h-4" />
+                                  选择
+                                </button>
+                              </div>
+                              <div 
+                                className="p-3 border-t border-zinc-800 bg-zinc-900/50 cursor-pointer hover:bg-zinc-800/50 transition-colors"
+                                onClick={() => {
+                                  const assetItem: AssetLibraryItem = {
+                                    type: 'video',
+                                    name: asset.source,
+                                    imageUrl: asset.thumbnailUrl || asset.url,
+                                    videoUrl: asset.url,
+                                    visualPrompt: asset.prompt,
+                                    metadata: {}
+                                  };
+                                  handleSelectVideoFromLibrary(assetItem);
+                                }}
+                              >
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                  <p className="text-sm text-zinc-200 font-bold truncate flex-1">{asset.source}</p>
+                                </div>
+                                {asset.prompt && (
+                                  <p className="text-[10px] text-zinc-500 line-clamp-2 font-mono">{asset.prompt}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                )
               )}
             </div>
           </div>

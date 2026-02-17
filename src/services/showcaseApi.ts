@@ -89,6 +89,7 @@ export interface GetShowcaseListParams extends PageParams {
   title?: string;
   categoryId?: number;
   contentType?: 'text' | 'image' | 'video';
+  originalPrompt?: string;
   isRecommended?: string;
   status?: string;
 }

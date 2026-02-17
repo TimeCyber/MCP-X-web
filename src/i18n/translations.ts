@@ -1,7 +1,9 @@
 
 
 const QUICK_PROMPTS_EN = [
+    { name: 'Storyboard', value: 'Create a storyboard from the uploaded image, highlighting key moments and transitions with cinematic angles, camera movements, and framing that capture the scene\'s mood and narrative flow.' },
     { name: 'Image to Figure', value: 'turn this photo into a character figure. Behind it, place a box with the character’s image printed on it, and a computer showing the Blender modeling process on its screen. In front of the box, add a round plastic base with the character figure standing on it. set the scene indoors if possible' },
+    { name: '16-Bit Pixel Game Character', value: 'Recreate this [Character] as a 16-bit video game character, and place the character in a level of a 2D 16-bit platform video game.' },
     { name: 'Change Character Perspective', value: 'change the Camera anglo a high-angled selfie perspective looking down at the woman, while preserving her exact facial features, expression, and clothing, Maintain the same living room interior background with the sofa, natural lighting, and overall photographic composition and style.' },
     { name: 'Architecture to Model', value: 'convert this photo into a architecture model. Behind the model, there should be a cardboard box with an image of the architecture from the photo on it. There should also be a computer, with the content on the computer screen showing the Blender modeling process of the figurine. In front of the cardboard box, place a cardstock and put the architecture model from the photo I provided on it. I hope the PVC material can be clearly presented. It would be even better if the background is indoors.' },
     { name: 'Combine Objects', value: 'Combine them together' },
@@ -18,7 +20,6 @@ const QUICK_PROMPTS_EN = [
     { name: 'Image to Knit Doll', value: 'A close-up, professionally composed photograph showing a handmade crocheted yarn doll being gently held in both hands. The doll has a rounded shape and an adorable chibi-style appearance, with vivid color contrasts and rich details. The hands holding the doll appear natural and tender, with clearly visible finger posture, and the skin texture and light-shadow transitions look soft and realistic, conveying a warm, tangible touch. The background is slightly blurred, depicting an indoor setting with a warm wooden tabletop and natural light streaming in through a window, creating a cozy and intimate atmosphere. The overall image conveys a sense of exquisite craftsmanship and a cherished, heartwarming emotion.' },
     { name: 'Image to Barbie Doll', value: "Transform the person in the photo into the style of a Barbie doll packaging box, presented in an isometric perspective. Label the packaging with the title 'ZHOGUE'. Inside the box, showcase the Barbie doll version of the person from the photo, accompanied by their essential items (such as cosmetics, bags, or others) designed as stylish Barbie accessories. Next to the box, also display the actual Barbie doll itself outside of the packaging, rendered in a realistic and lifelike style, resembling official Barbie promotional renders" },
     { name: 'Anything to Gundam', value: "Transform the person in the photo into the style of a Gundam model kit packaging box, presented in an isometric perspective. Label the packaging with the title 'ZHOGUE'. Inside the box, showcase a Gundam-style mecha version of the person from the photo, accompanied by their essential items (such as cosmetics, bags, or others) redesigned as futuristic mecha accessories. The packaging should resemble authentic Gunpla boxes, with technical illustrations, instruction-manual style details, and sci-fi typography. Next to the box, also display the actual Gundam-style mecha figure itself outside of the packaging, rendered in a realistic and lifelike style, similar to official Bandai promotional renders." },
-    { name: 'Cyber-Baby Generator', value: 'Generate what the child of the two people in the picture would look like, professional photography' },
     { name: 'Product Design to Reality', value: 'turn this illustration of a perfume into a realistic version, Frosted glass bottle with a marble cap' },
     { name: 'Photo to Pro Shot', value: 'Transform the person in the photo into highly stylized ultra-realistic portrait, with sharp facial features and flawless fair skin, standing confidently against a bold green gradient background. Dramatic, cinematic lighting highlights her facial structure, evoking the look of a luxury fashion magazine cover. Editorial photography style, high-detail, 4K resolution, symmetrical composition, minimalistic background' },
     { name: 'Lighting Reference', value: 'Change the lighting of the original image to match the reference image, professional photography' },
@@ -29,10 +30,12 @@ const QUICK_PROMPTS_EN = [
     { name: 'Product Packaging Mockup', value: 'Place the image on a packaging box and set it in a minimalist scene, professional photography' },
     { name: 'Virtual Makeup Try-on', value: 'Apply the makeup from the image to the person, while maintaining their original pose' },
     { name: 'Expression Reference', value: 'Change the person\'s expression to match the new image' },
-];
+  ];
 
 const QUICK_PROMPTS_ZHO = [
+    { name: '分鏡腳本', value: '以【圖片】製作分鏡腳本，強調重要場景與轉場效果，以電影般的拍攝角度、鏡頭運動與構圖呈現整體氛圍與敘事節奏。' },
     { name: '图片变手办', value: '将这张照片变成一个人物手办。在它后面，放置一个印有角色形象的盒子，以及一台屏幕上显示着Blender建模过程的电脑。在盒子前面，加一个圆形的塑料底座，上面站着角色手办。如果可能的话，将场景设置在室内' },
+    { name: '十六位像素游戏角色', value: '將此【角色】重製為 16 位的像素遊戲角色，並將該角色置入一個 2D 16 位平台遊戲的關卡中。' },
     { name: '改变人物视角', value: '将相机角度改为高角度自拍视角，俯视女性，同时保留她确切的面部特征、表情和服装，保持相同的客厅室内背景、沙发、自然光以及整体的摄影构图和风格。' },
     { name: '建筑变模型', value: '将这张照片转换成一个建筑模型。模型后面应该有一个纸板箱，上面印有照片中建筑的图片。还应该有一台电脑，电脑屏幕上显示着该模型的Blender建模过程。在纸板箱前面，放置一张卡纸，并把照片中的建筑模型放在上面。我希望PVC材质能清晰呈现。如果背景是室内的就更好了。' },
     { name: '组合对象', value: '把它们组合起来' },
@@ -49,7 +52,6 @@ const QUICK_PROMPTS_ZHO = [
     { name: '图片转针织娃娃', value: '一张特写、专业构图的照片，展示了一个手工钩编的毛线娃娃被温柔地捧在双手之中。娃娃造型圆润，呈可爱的赤壁风格，色彩对比鲜明，细节丰富。捧着娃娃的双手显得自然而温柔，手指姿势清晰可见，皮肤纹理和光影过渡看起来柔软逼真，传达出温暖、可触的感觉。背景略微模糊，描绘了一个室内场景，有温暖的木质桌面和透过窗户射入的自然光，营造出舒适亲密的氛围。整体画面传达出一种精致的手工艺感和被珍视、温馨的情感。' },
     { name: '图片转芭比娃娃', value: '将照片中的人物转换成芭比娃娃包装盒的风格，以等距视角呈现。包装上标注标题“ZHOGUE”。盒子内展示照片中人物的芭比娃娃版本，并附带他们的基本物品（如化妆品、包包或其他）设计成时尚的芭比配件。在盒子旁边，也以逼真生动的风格展示包装外的实际芭比娃娃，类似于官方芭比的宣传渲染图。' },
     { name: '万物皆可高达', value: '将照片中的人物转换成高达模型套件包装盒的风格，以等距视角呈现。包装上标注标题“ZHOGUE”。盒子内展示照片中人物的高达风格机甲版本，并附带他们的基本物品（如化妆品、包包或其他）重新设计成未来派的机甲配件。包装应类似于正品高达模型盒子，带有技术插图、说明书风格的细节和科幻字体。在盒子旁边，也以逼真生动的风格展示包装外的实际高达风格机甲，类似于官方万代的宣传渲染图。' },
-    { name: '赛博子女生成器', value: '生成图中两人物所生孩子的样子，专业摄影' },
     { name: '产品设计转实物', value: '将这个香水插图变成逼真版本，磨砂玻璃瓶配大理石盖' },
     { name: '照片转专业摄影', value: '将照片中的人物转换成高度风格化的超逼真肖像，面部特征鲜明，皮肤白皙无瑕，自信地站在大胆的绿色渐变背景前。戏剧性的电影灯光突显了她的面部结构，唤起了奢侈时尚杂志封面的感觉。编辑摄影风格，高细节，4K分辨率，对称构图，简约背景' },
     { name: '灯光参考', value: '原图换成参考图打光，专业摄影' },
@@ -59,8 +61,8 @@ const QUICK_PROMPTS_ZHO = [
     { name: '叠加效果', value: '为图片照片叠加上效果图片的效果' },
     { name: '产品包装样机', value: '把图片贴在包装盒上，并放在极简设计的布景中，专业摄影' },
     { name: '虚拟试妆', value: '为人物化上图片的妆，还保持人物原本的姿势' },
-    { name: '表情参考', value: '人物换成新图片的表情' },
-];
+    { name: '表情参考', value: '【图片1】换成【图片2】的表情' },
+   ];
 
 export const translations = {
   en: {
