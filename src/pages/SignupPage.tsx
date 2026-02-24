@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
 import { Github, AlertTriangle } from 'lucide-react';
@@ -9,6 +9,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 
 export const SignupPage: React.FC = () => {
   const { t, currentLanguage } = useLanguage();
+  const [searchParams] = useSearchParams();
+  const [inviteCode] = useState(() => searchParams.get('code') || '');
   const [formData, setFormData] = useState({
     username: '',
     password: '',
@@ -42,8 +44,8 @@ export const SignupPage: React.FC = () => {
     }
     setLoading(true);
     try {
-      // 使用新的ruoyi-element-ai项目的注册接口
-      const res = await api.user.register(formData.username, formData.password, formData.code);
+      // 使用新的ruoyi-element-ai项目的注册接口，如果有邀请码则一并传入
+      const res = await api.user.register(formData.username, formData.password, formData.code, inviteCode || undefined);
       if (res && res.code === 200) {
         toast.success(t('signup.registerSuccess'));
         setSuccess(t('signup.registerSuccessRedirect'));
@@ -111,15 +113,15 @@ export const SignupPage: React.FC = () => {
           </div>
           
           <div className="bg-gray-900 rounded-lg p-6 mb-4">
-            {error && (
-              <div className="mb-4 p-3 bg-red-900/50 border border-red-800 rounded-lg text-sm text-red-200">
-                {error}
+            {inviteCode && (
+              <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg text-sm text-orange-300 flex items-center gap-2">
+                <span>🎁</span>
+                <span>
+                  {currentLanguage === 'zh'
+                    ? `你通过邀请链接访问，注册后双方各得 100 元 Token 奖励（邀请码：${inviteCode}）`
+                    : `You're invited! Both you and your friend will get ¥100 Token after registration (Code: ${inviteCode})`}
+                </span>
               </div>
-            )}
-            {success && (
-              <div className="mb-4 p-3 bg-green-900/50 border border-green-800 rounded-lg text-sm text-green-200">
-                {success}
-            </div>
             )}
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
@@ -237,6 +239,16 @@ export const SignupPage: React.FC = () => {
                 >
                   {loading ? t('signup.registering') : t('signup.createAccount')}
                 </button>
+                {error && (
+                  <div className="mt-3 p-3 bg-red-900/50 border border-red-800 rounded-lg text-sm text-red-200">
+                    {error}
+                  </div>
+                )}
+                {success && (
+                  <div className="mt-3 p-3 bg-green-900/50 border border-green-800 rounded-lg text-sm text-green-200">
+                    {success}
+                  </div>
+                )}
               </div>
             </form>
             <div className="flex items-center my-6">

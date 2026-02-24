@@ -75,18 +75,32 @@ apiClient.interceptors.request.use(
   }
 );
 
+// token 过期统一处理：清理本地存储并跳转登录页
+function handleTokenExpired() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('username');
+  localStorage.removeItem('nickname');
+  localStorage.removeItem('userId');
+  // 避免在登录页重复跳转
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+  }
+}
+
 // 响应拦截器 - 不再直接返回data，而是保留完整响应结构
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // 服务端以 HTTP 200 返回但 body.code === 401，表示 token 失效
+    if (response.data?.code === 401) {
+      handleTokenExpired();
+      return Promise.reject(new Error(response.data?.msg || '认证失败'));
+    }
+    return response;
+  },
   (error) => {
-    console.log('API响应错误:', error.response);
-    // 只在明确的401状态码时处理token过期
+    // HTTP 状态码 401
     if (error.response?.status === 401) {
-      console.log('检测到401错误，清理token');
-      // 清理本地存储
-      localStorage.removeItem('token');
-      localStorage.removeItem('username');
-      localStorage.removeItem('nickname');
+      handleTokenExpired();
     }
     return Promise.reject(error);
   }
@@ -131,11 +145,12 @@ export const api = {
     },
     
     // 注册接口 - 改为使用ruoyi-element-ai项目的接口
-    register: async (username: string, password: string, code: string) => {
-      const registerData: RegisterDTO = {
+    register: async (username: string, password: string, code: string, inviteCode?: string) => {
+      const registerData: RegisterDTO & { inviteCode?: string } = {
         username,
         password,
-        code
+        code,
+        ...(inviteCode ? { inviteCode } : {})
       };
       
       const response = await apiClient.post<ApiResponse<any>>('/auth/register', registerData);
@@ -777,6 +792,20 @@ export const api = {
         return response.data;
       } catch (error) {
         console.error('根据分类获取Agent失败:', error);
+        throw error;
+      }
+    }
+  },
+
+  // 邀请码相关接口
+  invite: {
+    // 获取或生成当前用户的邀请码
+    getOrGenerateCode: async (): Promise<{ inviteCode: string; [key: string]: any }> => {
+      try {
+        const response = await apiClient.get('/web/invite/code/generate');
+        return response.data?.data;
+      } catch (error) {
+        console.error('获取邀请码失败:', error);
         throw error;
       }
     }

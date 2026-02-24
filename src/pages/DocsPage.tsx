@@ -630,7 +630,7 @@ const ConfigSection: React.FC<{ currentLanguage: string }> = ({ currentLanguage 
         </h3>
         <div className="bg-black/50 rounded-lg p-4 font-mono text-sm border border-gray-800">
           <div className="text-gray-500"># API 配置</div>
-          <div className="text-green-400">VITE_API_BASE_URL=<span className="text-orange-300">https://api.example.com</span></div>
+          <div className="text-green-400">VITE_API_BASE_URL=<span className="text-orange-300">https://www.mcp-x.com/prod-api</span></div>
           <div className="text-green-400">VITE_STATIC_BASE_URL=<span className="text-orange-300">/static</span></div>
           <div className="mt-2 text-gray-500"># GitHub OAuth</div>
           <div className="text-green-400">REACT_APP_GITHUB_CLIENT_ID=<span className="text-orange-300">your_client_id</span></div>

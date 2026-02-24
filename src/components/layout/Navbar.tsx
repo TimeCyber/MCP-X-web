@@ -1,9 +1,144 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Download, PlusSquare, LogOut, User, Settings, Bell, Award, MessageSquare, Cpu, Bot, Globe, Code2, ChevronDown } from 'lucide-react';
+import { Download, LogOut, User, Settings, Bell, Award, MessageSquare, Cpu, Bot, Globe, ChevronDown, Gift, Copy, X, Check } from 'lucide-react';
 import { Logo} from '../ui/Logo';
-
 import { useLanguage } from '../../contexts/LanguageContext';
+import api from '../../services/api';
+
+// 邀请注册组件
+const InviteButton: React.FC<{ token: string | null }> = ({ token }) => {
+  const { currentLanguage } = useLanguage();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [showModal, setShowModal] = useState(false);
+  const [inviteCode, setInviteCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const fetchInviteCode = async () => {
+    if (!token) {
+      navigate('/login', { state: { from: location } });
+      return;
+    }
+    setLoading(true);
+    setShowModal(true);
+    try {
+      const data = await api.invite.getOrGenerateCode();
+      if (data?.inviteCode) {
+        setInviteCode(data.inviteCode);
+      }
+    } catch (e) {
+      console.error('获取邀请码失败', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inviteLink = `${window.location.origin}/signup?code=${inviteCode}`;
+
+  const handleCopy = () => {
+    const inviteCode_display = inviteCode;
+    const copyText = `MCP-X - 开源AI助手！拉新=永久免费用！
+🎁马年新春活动福利：新用户获赠100元等价生图生视频token，邀请好友也可同样获得 100 元等价token！
+${inviteLink}
+（邀请码：${inviteCode_display}）`;
+    navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <>
+      <button
+        onClick={fetchInviteCode}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-full bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-400 hover:to-pink-400 text-white shadow-lg shadow-orange-500/30 transition-all whitespace-nowrap animate-pulse-slow"
+      >
+        <Gift size={14} />
+        {currentLanguage === 'zh' ? '邀请得Token' : 'Invite & Earn'}
+      </button>
+
+      {showModal && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowModal(false)} />
+          <div className="relative z-[10000] bg-gray-900 border border-gray-700 rounded-2xl p-6 w-[380px] shadow-2xl">
+            <button
+              className="absolute top-3 right-3 text-gray-400 hover:text-white"
+              onClick={() => setShowModal(false)}
+            >
+              <X size={18} />
+            </button>
+
+            {/* 标题 */}
+            <div className="text-center mb-5">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-orange-500 to-pink-500 mb-3">
+                <Gift size={28} className="text-white" />
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {currentLanguage === 'zh' ? '邀请好友，各得 Token' : 'Invite Friends, Earn Token'}
+              </h2>
+              <p className="text-gray-400 text-sm mt-1">
+                {currentLanguage === 'zh'
+                  ? '好友通过你的专属链接注册，双方各获赠 100 元 Token 奖励'
+                  : 'Both you and your friend get ¥100 Token when they register via your link'}
+              </p>
+            </div>
+
+            {/* 奖励说明 */}
+            <div className="flex gap-3 mb-5">
+              <div className="flex-1 bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 text-center">
+                <div className="text-orange-400 font-bold text-lg">¥100</div>
+                <div className="text-gray-400 text-xs mt-0.5">
+                  {currentLanguage === 'zh' ? '你获得' : 'You earn'}
+                </div>
+              </div>
+              <div className="flex items-center text-gray-600">+</div>
+              <div className="flex-1 bg-pink-500/10 border border-pink-500/30 rounded-xl p-3 text-center">
+                <div className="text-pink-400 font-bold text-lg">¥100</div>
+                <div className="text-gray-400 text-xs mt-0.5">
+                  {currentLanguage === 'zh' ? '好友获得' : 'Friend earns'}
+                </div>
+              </div>
+            </div>
+
+            {/* 邀请链接 */}
+            {loading ? (
+              <div className="flex justify-center py-4">
+                <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : inviteCode ? (
+              <div>
+                <p className="text-xs text-gray-500 mb-1.5">
+                  {currentLanguage === 'zh' ? '你的专属邀请链接' : 'Your invite link'}
+                </p>
+                <div className="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">
+                  <span className="flex-1 text-xs text-gray-300 truncate">{inviteLink}</span>
+                  <button
+                    onClick={handleCopy}
+                    className="flex-shrink-0 text-orange-400 hover:text-orange-300 transition-colors"
+                  >
+                    {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
+                  </button>
+                </div>
+                {copied && (
+                  <p className="text-green-400 text-xs mt-1.5 text-center">
+                    {currentLanguage === 'zh' ? '已复制到剪贴板' : 'Copied to clipboard'}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-red-400 text-sm">
+                {currentLanguage === 'zh' ? '获取邀请码失败，请重试' : 'Failed to get invite code'}
+              </p>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
 
 // 语言切换按钮组件
 const LanguageToggle: React.FC = () => {
@@ -21,7 +156,7 @@ const LanguageToggle: React.FC = () => {
     >
       <Globe size={16} />
       <span className="text-xs font-medium">
-        {currentLanguage === 'zh' ? 'EN' : '中'}
+        {currentLanguage === 'zh' ? '中' : 'EN'}
       </span>
     </button>
   );
@@ -143,28 +278,45 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
                 onMouseEnter={openAiMenu}
                 onMouseLeave={closeAiMenuWithDelay}
               >
-                <Link
-                  to="/chat"
-                  className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI文字工作台' : 'AI Chat'}
-                </Link>
-                <Link
-                  to="/image-editor"
-                  className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI图形工作台' : 'AI Graphics Studio'}
-                </Link>
-                <Link
-                  to="/video-studio"
-                  className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI视频工作台' : 'AI Video Studio'}
-                </Link>
                 <button
                   onClick={() => {
-                    const token = localStorage.getItem('token');
-                    if (!token) {
+                    if (!localStorage.getItem('token')) {
+                      navigate('/login', { state: { from: { pathname: '/chat' } } });
+                      return;
+                    }
+                    navigate('/chat');
+                  }}
+                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                >
+                  {currentLanguage === 'zh' ? 'AI文字工作台' : 'AI Chat'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!localStorage.getItem('token')) {
+                      navigate('/login', { state: { from: { pathname: '/image-editor' } } });
+                      return;
+                    }
+                    navigate('/image-editor');
+                  }}
+                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                >
+                  {currentLanguage === 'zh' ? 'AI图形工作台' : 'AI Graphics Studio'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!localStorage.getItem('token')) {
+                      navigate('/login', { state: { from: { pathname: '/video-studio' } } });
+                      return;
+                    }
+                    navigate('/video-studio');
+                  }}
+                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
+                >
+                  {currentLanguage === 'zh' ? 'AI视频工作台' : 'AI Video Studio'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!localStorage.getItem('token')) {
                       navigate('/login', { state: { from: { pathname: location.pathname } } });
                       return;
                     }
@@ -211,14 +363,14 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
             className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2 whitespace-nowrap"
           >
             <Award size={16} className="mr-1" />
-{currentLanguage === 'zh' ? '奖研金计划' : 'Rewards Program'}
+{currentLanguage === 'zh' ? '奖研金' : 'Rewards Program'}
           </Link>
           <Link
             to="/download"
             className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2 whitespace-nowrap"
           >
             <Download size={16} className="mr-1" />
-{currentLanguage === 'zh' ? '下载客户端' : 'Download Client'}
+{currentLanguage === 'zh' ? '客户端' : 'Client'}
           </Link>
           <a
             href="https://github.com/TimeCyber/MCP-X-web"
@@ -242,6 +394,8 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
             </svg>
             {currentLanguage === 'zh' ? '文档' : 'Docs'}
           </Link>
+          {/* 邀请得Token */}
+          <InviteButton token={token} />
           {/* 语言切换：登录与未登录均显示 */}
           <LanguageToggle />
           {token ? (
@@ -305,7 +459,6 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
                   <div ref={profileRef} className="absolute right-0 mt-2 w-48 bg-gray-900 rounded-lg shadow-lg py-2 border border-gray-800">
                     <div className="px-4 py-2 border-b border-gray-800">
                       <p className="font-medium">{nickname}</p>
-                      {/* <p className="text-sm text-gray-400">john@example.com</p> */}
                     </div>
                     <Link
                       to="/settings"

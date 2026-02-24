@@ -18,7 +18,7 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server }) => {
   return (
     <Link 
       to={`/server/${server.id}`}
-      className="block w-full bg-gray-800 rounded-lg transition-all duration-200 hover:bg-gray-750 p-4 border border-gray-700 hover:border-gray-600 h-[250px] flex flex-col"
+      className="block w-full rounded-lg transition-all duration-200 p-4 h-[250px] flex flex-col border backdrop-blur-md bg-white/10 hover:bg-white/20 border-white/20 hover:border-white/30 shadow-sm"
     >
       <div className="flex justify-between items-start mb-2">
         <h3 className="text-lg font-semibold text-white flex items-center group-hover:text-orange-500">

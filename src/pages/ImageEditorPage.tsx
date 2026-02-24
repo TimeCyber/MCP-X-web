@@ -1714,6 +1714,18 @@ const ImageEditorPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, isInitialized, models.length, videoModels.length, handleAutoVideoGeneration]);
 
+  // 将跳转携带的 initialPrompt 填入输入框（不自动发送的场景）
+  useEffect(() => {
+    const state = location.state as any;
+    if (!state?.autoSubmit && state?.initialPrompt?.trim() && isInitialized) {
+      setPrompt(state.initialPrompt);
+      // 如果是视频模式，切换到视频 tab
+      if (state.mode === 'video') {
+        setGenerateMode('video');
+      }
+    }
+  }, [location.state, isInitialized]);
+
   // 检查用户登录状态并初始化 Boards（优先从缓存加载，否则从后端加载 sessions）
   useEffect(() => {
     const userId = localStorage.getItem('userId');

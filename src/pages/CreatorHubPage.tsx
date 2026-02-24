@@ -97,7 +97,7 @@ const creationOptions: CreationOption[] = [
   {
     type: 'mcp',
     icon: <Compass className="w-6 h-6" />,
-    title: 'MCP 导航',
+    title: 'MCP 市场',
     titleEn: 'MCP Navigation',
     description: '探索 MCP 服务器生态',
     descriptionEn: 'Explore MCP server ecosystem',
@@ -709,6 +709,11 @@ export const CreatorHubPage: React.FC = () => {
             setIsLoading(false);
             return;
           }
+          if (!localStorage.getItem('token')) {
+            navigate('/login', { state: { from: location } });
+            setIsLoading(false);
+            return;
+          }
           // 跳转到聊天页面，带上初始消息和自动提交标记
           navigate('/chat', { 
             state: { 
@@ -722,6 +727,11 @@ export const CreatorHubPage: React.FC = () => {
         case 'image':
           if (!prompt.trim() && uploadedImages.length === 0) {
             toast.error(currentLanguage === 'zh' ? '请输入内容或上传图片' : 'Please enter content or upload images');
+            setIsLoading(false);
+            return;
+          }
+          if (!localStorage.getItem('token')) {
+            navigate('/login', { state: { from: location } });
             setIsLoading(false);
             return;
           }
@@ -741,6 +751,11 @@ export const CreatorHubPage: React.FC = () => {
         case 'video':
           if (!prompt.trim() && !videoFirstFrame && !videoLastFrame) {
             toast.error(currentLanguage === 'zh' ? '请输入内容或上传首帧/尾帧图片' : 'Please enter content or upload first/last frame images');
+            setIsLoading(false);
+            return;
+          }
+          if (!localStorage.getItem('token')) {
+            navigate('/login', { state: { from: location } });
             setIsLoading(false);
             return;
           }
@@ -840,7 +855,7 @@ export const CreatorHubPage: React.FC = () => {
             selectedType === 'video' ? 'opacity-0' : 'opacity-40'
           }`}
           style={{
-            backgroundImage: 'url(/images/hero.jpg)',
+            backgroundImage: 'url(/images/hero.webp)',
             maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
             filter: 'brightness(1.3)'
@@ -1356,9 +1371,18 @@ export const CreatorHubPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {/* 瀑布流布局 - 使用 CSS columns 实现自适应高度 */}
+              {/* 瀑布流布局 - 将数据按列分组，确保横向第一排显示最新内容 */}
+              {(() => {
+                const colCount = 4; // 列数（对应 xl:columns-4）
+                // 将数据按行优先重排为列优先：横向第一排的元素分配到各列第一位
+                const cols: ShowcaseContent[][] = Array.from({ length: colCount }, () => []);
+                showcaseList.forEach((item, i) => {
+                  cols[i % colCount].push(item);
+                });
+                const reordered = cols.flat();
+                return (
               <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 lg:gap-6 space-y-4 lg:space-y-6">
-                {showcaseList.map((item) => (
+                {reordered.map((item) => (
                   <div
                     key={item.id}
                     className="break-inside-avoid bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer"
@@ -1484,6 +1508,8 @@ export const CreatorHubPage: React.FC = () => {
                   </div>
                 ))}
               </div>
+                );
+              })()}
 
               {/* 加载更多提示 */}
               {showcaseLoading && showcaseList.length > 0 && (
@@ -1868,7 +1894,7 @@ export const CreatorHubPage: React.FC = () => {
                         
                         navigate('/image-editor', { state: stateData });
                       } else if (selectedShowcase.contentType === 'video') {
-                        // 跳转到图片编辑器，执行视频生成
+                        // 跳转到图片编辑器，带入提示词但不自动发送
                         navigate('/image-editor', { 
                           state: { 
                             initialPrompt: prompt,
@@ -1876,7 +1902,7 @@ export const CreatorHubPage: React.FC = () => {
                             size: '720P',
                             ratio: '16:9',
                             duration: '5秒',
-                            autoSubmit: true
+                            autoSubmit: false
                           } 
                         });
                       }

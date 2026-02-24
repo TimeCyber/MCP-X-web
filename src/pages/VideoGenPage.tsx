@@ -168,43 +168,17 @@ const VideoGenPage: React.FC = () => {
     projectRef.current = project;
   }, [project]);
 
-  // 检查登录状态和用户权限
+  // 检查登录状态
   useEffect(() => {
-    const checkAccess = async () => {
-      const userId = localStorage.getItem('userId');
-      const token = localStorage.getItem('token');
-
-      if (!userId || !token) {
-        alert('请先登录后再使用 MCP-X Video Studio 功能');
-        navigate('/login');
-        return;
-      }
-
-      // 检查用户套餐权限
-      try {
-        const response = await api.payment.getMyBalanceAndPlan();
-        if (response.code === 200 && response.data) {
-          const userPlan = response.data.userPlan;
-          // 存储到缓存（与SettingsPage保持一致）
-          if (userPlan) {
-            localStorage.setItem('userPlan', userPlan);
-          }
-
-          // 检查是否为免费用户
-          const isFree = userPlan && userPlan.toLowerCase() === 'free';
-          setHasAccess(!isFree);
-        } else {
-          // 如果获取失败，默认认为无权限
-          setHasAccess(false);
-        }
-      } catch (error) {
-        console.error('获取用户套餐信息失败:', error);
-        // 如果获取失败，默认认为无权限
-        setHasAccess(false);
-      }
-    };
-
-    checkAccess();
+    const userId = localStorage.getItem('userId');
+    const token = localStorage.getItem('token');
+    if (!userId || !token) {
+      alert('请先登录后再使用 MCP-X Video Studio 功能');
+      navigate('/login');
+      return;
+    }
+    // 暂时不验证套餐权限，直接放行
+    setHasAccess(true);
   }, [navigate]);
 
   // 自动保存 - 只有在项目完全加载后才触发

@@ -180,7 +180,7 @@ const McpPageContent: React.FC = () => {
       <Link 
         to={`/server/${server.id}`} 
         key={server.id}
-        className="block bg-[#1e2532] rounded-lg p-5 hover:bg-gray-700 transition-colors relative"
+        className="block w-full rounded-lg transition-all duration-200 p-5 h-[250px] flex flex-col border backdrop-blur-md bg-white/10 hover:bg-white/20 border-white/20 hover:border-white/30 shadow-sm relative"
       >
         <div className="absolute top-5 right-5 text-sm text-gray-400">
           {server.usageCount || 0} {currentLanguage === 'zh' ? '次调用' : 'calls'}
@@ -228,12 +228,11 @@ const McpPageContent: React.FC = () => {
               {currentLanguage === 'zh' ? '发掘AI智能体的真实应用场景' : 'Discover real-world AI agent applications'}
             </div>
             
-            <div className="w-full max-w-2xl mt-8">
-              <SearchBar onSearch={handleSearchBarSearch} searchQuery={searchQuery} onClear={handleClearSearch} />
-            </div>
-
-            {/* 添加服务器按钮 */}
-            <div className="mt-6 flex justify-center">
+            {/* 搜索框和添加服务器按钮在同一行 */}
+            <div className="w-full max-w-2xl mt-8 flex gap-4">
+              <div className="flex-1">
+                <SearchBar onSearch={handleSearchBarSearch} searchQuery={searchQuery} onClear={handleClearSearch} />
+              </div>
               <Link
                 to="/add-server"
                 className="bg-orange-500 hover:bg-orange-600 text-black font-medium text-sm rounded-md px-6 py-3 transition-colors flex items-center whitespace-nowrap shadow-lg hover:shadow-xl"
