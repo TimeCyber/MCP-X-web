@@ -14,7 +14,8 @@ import {
   Zap,
   Shield,
   Globe,
-  Database
+  Database,
+  Video
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -25,6 +26,7 @@ export const DocsPage: React.FC = () => {
   const sections = [
     { id: 'overview', icon: <Book className="w-5 h-5" />, title: '平台概述', titleEn: 'Overview' },
     { id: 'features', icon: <Zap className="w-5 h-5" />, title: '核心功能', titleEn: 'Features' },
+    { id: 'videogen', icon: <Video className="w-5 h-5" />, title: '视频生成指南', titleEn: 'Video Gen Guide' },
     { id: 'quickstart', icon: <Rocket className="w-5 h-5" />, title: '快速开始', titleEn: 'Quick Start' },
     { id: 'api', icon: <Code className="w-5 h-5" />, title: 'API 文档', titleEn: 'API Docs' },
     { id: 'config', icon: <Settings className="w-5 h-5" />, title: '配置说明', titleEn: 'Configuration' },
@@ -50,13 +52,13 @@ export const DocsPage: React.FC = () => {
               >
                 <h1 className="text-4xl lg:text-6xl font-bold mb-6 tracking-tight">
                   <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                    {currentLanguage === 'zh' ? 'MCP-X 平台文档' : 'MCP-X Platform Documentation'}
+                    {currentLanguage === 'zh' ? 'MCP-X 企业级 AI 中台文档' : 'MCP-X Enterprise AI Platform Docs'}
                   </span>
                 </h1>
                 <p className="text-xl text-gray-400 mb-8 leading-relaxed">
                   {currentLanguage === 'zh' 
-                    ? '企业级 AI 智能体开发平台完整指南，助您快速构建下一代 AI 应用' 
-                    : 'Complete Guide for Enterprise AI Agent Development Platform, helping you build next-gen AI apps fast'}
+                    ? '企业级 AI 中台完整指南，助您快速构建下一代 AI 应用' 
+                    : 'Complete Guide for the Enterprise AI Middle Platform, helping you build next-gen AI apps fast'}
                 </p>
                 <div className="flex gap-4 justify-center">
                   <a
@@ -122,6 +124,7 @@ export const DocsPage: React.FC = () => {
                 >
                   {activeSection === 'overview' && <OverviewSection currentLanguage={currentLanguage} />}
                   {activeSection === 'features' && <FeaturesSection currentLanguage={currentLanguage} />}
+                  {activeSection === 'videogen' && <VideoGenGuideSection currentLanguage={currentLanguage} />}
                   {activeSection === 'quickstart' && <QuickStartSection currentLanguage={currentLanguage} />}
                   {activeSection === 'api' && <APISection currentLanguage={currentLanguage} />}
                   {activeSection === 'config' && <ConfigSection currentLanguage={currentLanguage} />}
@@ -138,6 +141,195 @@ export const DocsPage: React.FC = () => {
   );
 };
 
+// 视频生成指南部分
+const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) => {
+  const zh = currentLanguage === 'zh';
+  return (
+    <div className="space-y-10">
+      <div>
+        <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">
+          <span className="w-1 h-8 bg-orange-500 rounded-full"/>
+          {zh ? '视频生成指南' : 'Video Generation Guide'}
+        </h2>
+        <p className="text-gray-400 mt-3">
+          {zh
+            ? '本页解答关于 AI 视频工作台的常见疑问：页面地址、API 调用方式与完整工作流程。'
+            : 'Answers common questions about the AI Video Studio: URL, API usage, and full workflow.'}
+        </p>
+      </div>
+
+      {/* 1. 页面地址 */}
+      <section className="bg-gray-900/60 rounded-2xl border border-gray-800 p-7 space-y-4">
+        <h3 className="text-xl font-bold flex items-center gap-2 text-orange-400">
+          <span className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center text-sm font-bold">1</span>
+          {zh ? '视频生成页面地址' : 'Video Studio URL'}
+        </h3>
+        <p className="text-gray-300">
+          {zh ? '视频工作台的前端路由为：' : 'The frontend route for the Video Studio is:'}
+        </p>
+        <div className="bg-black/50 rounded-xl border border-gray-700 px-5 py-3 font-mono text-orange-300 text-sm">
+          /video-studio
+        </div>
+        <p className="text-gray-400 text-sm">
+          {zh
+            ? '完整 URL 示例：https://www.mcp-x.com/video-studio。该页面需要登录后才能访问，未登录会自动跳转到 /login。'
+            : 'Full example: https://www.mcp-x.com/video-studio. Login is required; unauthenticated users are redirected to /login.'}
+        </p>
+      </section>
+
+      {/* 2. API 调用方式 */}
+      <section className="bg-gray-900/60 rounded-2xl border border-gray-800 p-7 space-y-5">
+        <h3 className="text-xl font-bold flex items-center gap-2 text-orange-400">
+          <span className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center text-sm font-bold">2</span>
+          {zh ? 'API 接口调用方式' : 'API Call Details'}
+        </h3>
+
+        <div className="space-y-3">
+          <p className="text-gray-300 font-medium">{zh ? '接口地址' : 'Endpoint'}</p>
+          <div className="bg-black/50 rounded-xl border border-gray-700 px-5 py-3 font-mono text-green-400 text-sm">
+            https://www.mcp-x.com/prod-api/ai/video/generate
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-gray-300 font-medium">{zh ? '请求头' : 'Headers'}</p>
+          <div className="bg-black/50 rounded-xl border border-gray-700 px-5 py-3 font-mono text-sm text-gray-300">
+            <div><span className="text-blue-400">Content-Type</span>: application/json</div>
+            <div><span className="text-blue-400">Authorization</span>: Bearer {'<token>'}</div>
+            <div><span className="text-blue-400">Accept</span>: text/event-stream</div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-gray-300 font-medium">{zh ? '请求体（三种模式）' : 'Request Body (3 modes)'}</p>
+          <div className="grid gap-3">
+            {[
+              {
+                label: zh ? '① 文生视频（只传 prompt）' : '① Text-to-Video (prompt only)',
+                code: `{\n  "model": "kling-v1.6-standard",\n  "prompt": "a cat running in the park",\n  "duration": 5,\n  "ratio": "16:9",\n  "resolution": "720P",\n  "userId": "string",\n  "sessionId": "string",\n  "appId": "mcpx-video-studio"\n}`,
+              },
+              {
+                label: zh ? '② 图生视频（传 imageUrl）' : '② Image-to-Video (imageUrl)',
+                code: `{\n  ...// 同上\n  "imageUrl": "https://your-start-frame.jpg"\n}`,
+              },
+              {
+                label: zh ? '③ 首尾帧插值（传 firstFrameUrl + lastFrameUrl）' : '③ Keyframe Interpolation',
+                code: `{\n  ...// 同上\n  "firstFrameUrl": "https://start.jpg",\n  "lastFrameUrl": "https://end.jpg"\n}`,
+              },
+            ].map((item, i) => (
+              <div key={i} className="rounded-xl overflow-hidden border border-gray-800">
+                <div className="bg-gray-800/60 px-4 py-2 text-xs text-gray-400 font-medium">{item.label}</div>
+                <pre className="bg-black/40 px-4 py-3 text-xs font-mono text-green-400 overflow-x-auto">{item.code}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-gray-300 font-medium">{zh ? '可选参数' : 'Optional Parameters'}</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="text-gray-500 border-b border-gray-800">
+                  <th className="pb-2 font-medium pr-4">{zh ? '参数' : 'Param'}</th>
+                  <th className="pb-2 font-medium pr-4">{zh ? '类型' : 'Type'}</th>
+                  <th className="pb-2 font-medium">{zh ? '说明' : 'Description'}</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-300">
+                {[
+                  ['audio', 'boolean', zh ? '是否生成同步音频' : 'Generate synchronized audio'],
+                  ['audioUrl', 'string', zh ? '背景音频文件 URL' : 'Background audio file URL'],
+                  ['seed', 'number', zh ? '随机种子，用于复现结果' : 'Seed for reproducible results'],
+                  ['refImages', 'string[]', zh ? '额外参考图（角色图、场景图等）' : 'Extra reference images (characters, scenes)'],
+                  ['referenceMaterials', 'object[]', zh ? '@功能引用的素材列表' : 'Materials referenced via @ mention'],
+                ].map(([p, t, d], i) => (
+                  <tr key={i} className="border-b border-gray-800/50">
+                    <td className="py-2.5 font-mono text-orange-300 pr-4">{p}</td>
+                    <td className="py-2.5 font-mono text-blue-400 text-xs pr-4">{t}</td>
+                    <td className="py-2.5 text-gray-400">{d}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-gray-300 font-medium">{zh ? 'SSE 响应格式' : 'SSE Response Format'}</p>
+          <div className="bg-black/50 rounded-xl border border-gray-700 px-5 py-4 font-mono text-xs text-blue-300 space-y-1">
+            <div className="text-gray-500">{zh ? '// 进度推送' : '// Progress events'}</div>
+            <div>{'data: {"choices":[{"delta":{"content":"{\\"progress\\":30}"}}]}'}</div>
+            <div className="text-gray-500 mt-2">{zh ? '// 视频完成' : '// Video ready'}</div>
+            <div>{'data: {"choices":[{"delta":{"content":"<video>https://cdn.../result.mp4</video>"}}]}'}</div>
+            <div className="text-gray-500 mt-2">{zh ? '// 最后一帧（可选）' : '// Last frame (optional)'}</div>
+            <div>{'data: {"choices":[{"delta":{"content":"{\\"lastFrameUrl\\":\\"https://...\\"}"}}]}'}</div>
+            <div className="text-gray-500 mt-2">{zh ? '// 流结束' : '// Stream end'}</div>
+            <div>data: [DONE]</div>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. 完整工作流程 */}
+      <section className="bg-gray-900/60 rounded-2xl border border-gray-800 p-7 space-y-6">
+        <h3 className="text-xl font-bold flex items-center gap-2 text-orange-400">
+          <span className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center text-sm font-bold">3</span>
+          {zh ? '完整工作流程' : 'Full Workflow'}
+        </h3>
+        <div className="space-y-3">
+          {[
+            {
+              step: zh ? '① 编写剧本' : '① Write Script',
+              desc: zh ? '在"剧本"阶段输入原始剧本文本，AI 自动解析出角色、场景、段落结构。' : 'Enter raw script text in the Script stage. AI parses characters, scenes, and paragraphs.',
+              api: null,
+            },
+            {
+              step: zh ? '② 生成分镜' : '② Generate Storyboard',
+              desc: zh ? 'AI 根据每个场景自动生成专业分镜列表（镜头描述、景别、运镜、对白）。' : 'AI generates a professional shot list per scene (description, shot size, camera movement, dialogue).',
+              api: 'POST /chat/send  (streamChatSend)',
+            },
+            {
+              step: zh ? '③ 生成角色 / 场景参考图' : '③ Generate Reference Images',
+              desc: zh ? '为每个角色生成定妆照，为每个场景生成参考图，用于后续图像和视频生成时保持一致性。' : 'Generate character reference images and scene reference images for visual consistency.',
+              api: 'POST /ai/image/generate',
+            },
+            {
+              step: zh ? '④ 生成关键帧' : '④ Generate Keyframes',
+              desc: zh ? '为每个分镜生成起始帧（和可选的结束帧），分辨率 2560×1440。' : 'Generate start (and optional end) keyframes per shot at 2560×1440.',
+              api: 'POST /ai/image/generate',
+            },
+            {
+              step: zh ? '⑤ 生成视频片段' : '⑤ Generate Video Clips',
+              desc: zh ? '以关键帧为起始/结束帧，调用视频生成接口，SSE 流式返回进度和最终视频 URL。' : 'Use keyframes as start/end frames, call the video API, receive progress and final URL via SSE.',
+              api: 'POST /ai/video/generate',
+            },
+            {
+              step: zh ? '⑥ 导出合并' : '⑥ Export & Merge',
+              desc: zh ? '在浏览器端将所有视频片段按顺序合并，导出为完整视频文件。' : 'Merge all video clips in order in the browser and export as a single video file.',
+              api: null,
+            },
+          ].map((item, i) => (
+            <div key={i} className="flex gap-4 p-4 rounded-xl bg-black/20 border border-gray-800/60">
+              <div className="shrink-0 w-7 h-7 rounded-full bg-orange-500/15 flex items-center justify-center text-orange-400 text-xs font-bold mt-0.5">
+                {i + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-gray-200 mb-1">{item.step}</p>
+                <p className="text-gray-400 text-sm">{item.desc}</p>
+                {item.api && (
+                  <code className="mt-2 inline-block text-xs font-mono bg-orange-500/10 text-orange-300 px-2 py-0.5 rounded">
+                    {item.api}
+                  </code>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+};
+
 // 平台概述部分
 const OverviewSection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) => (
   <div className="space-y-8">
@@ -150,8 +342,8 @@ const OverviewSection: React.FC<{ currentLanguage: string }> = ({ currentLanguag
       <div className="bg-gradient-to-br from-gray-900 to-black rounded-2xl p-8 border border-gray-800 shadow-xl">
         <p className="text-gray-300 text-lg leading-relaxed">
           {currentLanguage === 'zh' 
-            ? 'MCP-X 是一个企业级 AI 智能体开发平台，集成了 AI 对话、视频生成、图像编辑、前端应用构建等多种创作工具，为企业和开发者提供一站式的 AI 工作流解决方案。'
-            : 'MCP-X is an enterprise-grade AI agent development platform that integrates AI conversation, video generation, image editing, frontend application building, and other creative tools, providing a one-stop AI workflow solution for enterprises and developers.'}
+            ? 'MCP-X 是一个企业级 AI 中台，集成了 AI 对话、视频生成、图像编辑、前端应用构建等多种创作工具，为企业和开发者提供一站式的 AI 工作流解决方案。'
+            : 'MCP-X is an enterprise AI middle platform that integrates AI conversation, video generation, image editing, frontend application building, and other creative tools, providing a one-stop AI workflow solution for enterprises and developers.'}
         </p>
       </div>
     </div>
@@ -391,6 +583,36 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
       ]
     },
     {
+      title: currentLanguage === 'zh' ? '模型列表' : 'Model List',
+      endpoints: [
+        {
+          method: 'GET',
+          endpoint: '/system/model/modelList',
+          title: currentLanguage === 'zh' ? '获取所有模型' : 'Get All Models',
+          description: currentLanguage === 'zh'
+            ? '获取平台支持的所有 AI 模型列表，包含对话、图像、视频等各类模型，可通过 category 字段区分类型'
+            : 'Get all AI models supported by the platform. Use the category field to filter by type.',
+          response: `{
+  "code": 200,
+  "data": [
+    {
+      "id": "string",
+      "modelName": "gpt-4o",
+      "category": "text2text",   // text2text | text2image | text2video
+      "modelDescribe": "string",
+      "modelPrice": 0,
+      "modelType": "string",
+      "modelShow": "string",
+      "systemPrompt": null,
+      "apiHost": "string",
+      "remark": "string"
+    }
+  ]
+}`
+        }
+      ]
+    },
+    {
       title: currentLanguage === 'zh' ? 'AI 对话' : 'AI Chat',
       endpoints: [
         {
@@ -428,28 +650,77 @@ data: [DONE]`
           method: 'POST',
           endpoint: '/ai/image/generate',
           title: currentLanguage === 'zh' ? '文生图' : 'Text to Image',
-          description: currentLanguage === 'zh' ? '根据文字描述生成图像' : 'Generate images from text',
+          description: currentLanguage === 'zh'
+            ? '根据文字描述生成图像。无参考图时走文生图模型（默认 z-image-turbo）。'
+            : 'Generate an image from a text prompt. Uses text-to-image model when no reference images are provided.',
           request: `{
-  "prompt": "a beautiful sunset",
-  "model": "z-image-turbo",
-  "size": "1024*1024"
+  "prompt": "cinematic portrait of a young woman",
+  "model": "z-image-turbo",       // 模型名，默认 z-image-turbo
+  "userId": "string",
+  "sessionId": "string",          // 可选，关联会话
+  "appId": "mcpx-text2image",
+  "size": "1024*1024",            // 宽*高，如 1280*720 / 2560*1440
+  "watermark": false,             // 是否加水印
+  "referenceMaterials": []        // 可选，@功能引用的素材
 }`,
           response: `{
   "code": 200,
   "data": {
-    "imageUrl": "https://..."
+    "imageUrl": "https://cdn.../result.png",
+    "imageBase64": "base64..."    // 部分模型直接返回 base64
   }
 }`
         },
         {
           method: 'POST',
+          endpoint: '/ai/image/generate',
+          title: currentLanguage === 'zh' ? '参考图生图（图生图）' : 'Reference Image-to-Image',
+          description: currentLanguage === 'zh'
+            ? '传入一张或多张参考图时，自动切换为图生图模式（调用 /ai/image/edit），保持参考图的视觉风格和角色一致性。支持场景图 + 多张角色定妆照同时传入。'
+            : 'When referenceImages are provided, the service automatically switches to image-to-image mode (calls /ai/image/edit internally), preserving visual style and character consistency.',
+          request: `// 前端调用 generateImage(prompt, referenceImages, model, sessionId, size)
+// 内部自动路由到 /ai/image/edit，请求体如下：
+{
+  "prompt": "Generate a cinematic shot matching this prompt: \\"...\\"",
+  "model": "flux-dev",            // 图生图默认模型
+  "userId": "string",
+  "sessionId": "string",
+  "appId": "mcpx-text2image",
+  "size": "1280*720",
+  "images": [
+    { "data": "base64...", "mimeType": "image/png" },  // 场景参考图
+    { "data": "base64...", "mimeType": "image/png" }   // 角色定妆照（可多张）
+  ]
+  // mask 字段不传 → 全图重绘
+}`
+        },
+        {
+          method: 'POST',
           endpoint: '/ai/image/edit',
-          title: currentLanguage === 'zh' ? '图像编辑' : 'Image Edit',
-          description: currentLanguage === 'zh' ? '图生图或局部重绘' : 'Image to image or inpainting',
+          title: currentLanguage === 'zh' ? '图像局部编辑（蒙版重绘）' : 'Inpainting (Mask Edit)',
+          description: currentLanguage === 'zh'
+            ? '传入原图 + 蒙版 + 提示词，对蒙版区域进行局部重绘，其余区域保持不变。'
+            : 'Pass source image + mask + prompt to repaint only the masked region.',
           request: `{
   "prompt": "change hair color to red",
-  "images": [{ "data": "base64...", "mimeType": "image/png" }],
-  "mask": { "data": "base64...", "mimeType": "image/png" }
+  "model": "flux-dev",
+  "userId": "string",
+  "sessionId": "string",
+  "appId": "mcpx-text2image",
+  "size": "1024*1024",
+  "images": [
+    { "data": "base64...", "mimeType": "image/png" }   // 原图
+  ],
+  "mask": {
+    "data": "base64...",          // 蒙版：白色=重绘区域，黑色=保留区域
+    "mimeType": "image/png"
+  }
+}`,
+          response: `{
+  "code": 200,
+  "data": {
+    "imageUrl": "https://cdn.../edited.png"
+  }
 }`
         }
       ]
@@ -460,16 +731,77 @@ data: [DONE]`
         {
           method: 'POST',
           endpoint: '/ai/video/generate',
-          title: currentLanguage === 'zh' ? '生成视频' : 'Generate Video',
-          description: currentLanguage === 'zh' ? '流式视频生成接口' : 'Streaming video generation',
+          title: currentLanguage === 'zh' ? '文生视频' : 'Text to Video',
+          description: currentLanguage === 'zh'
+            ? '只传 prompt，不传任何图片参数，走文生视频模式。响应为 SSE 流，持续推送进度直到视频 URL 返回。'
+            : 'Prompt only, no image params. Uses text-to-video mode. Response is SSE stream.',
           request: `{
   "model": "kling-v1.6-standard",
-  "prompt": "a cat running",
-  "duration": 5,
-  "aspectRatio": "16:9"
+  "prompt": "a cat running in the park",
+  "duration": 5,                  // 时长（秒），默认 5
+  "ratio": "16:9",                // 16:9 | 9:16 | 1:1
+  "resolution": "720P",           // 480P | 720P | 1080P
+  "userId": "string",
+  "sessionId": "string",
+  "appId": "mcpx-video-studio",
+  "audio": false,                 // 可选：是否生成同步音频
+  "seed": 12345                   // 可选：随机种子
 }`,
-          response: `data: {"choices":[{"delta":{"content":"{\\"progress\\":30}"}}]}
-data: {"choices":[{"delta":{"content":"{\\"videoUrl\\":\\"...\\"}"}}]}`
+          response: `data: {"choices":[{"delta":{"content":"{\\"progress\\":10,\\"message\\":\\"排队中\\"}"}}]}
+data: {"choices":[{"delta":{"content":"{\\"progress\\":60,\\"message\\":\\"生成中\\"}"}}]}
+data: {"choices":[{"delta":{"content":"<video>https://cdn.../result.mp4</video>"}}]}
+data: [DONE]`
+        },
+        {
+          method: 'POST',
+          endpoint: '/ai/video/generate',
+          title: currentLanguage === 'zh' ? '图生视频（起始帧）' : 'Image to Video (Start Frame)',
+          description: currentLanguage === 'zh'
+            ? '传入 imageUrl 作为视频起始帧，AI 根据 prompt 生成后续动态画面。同时可传 refImages 提供角色/场景参考图增强一致性。'
+            : 'Pass imageUrl as the start frame. AI animates from that frame based on the prompt. refImages can be added for consistency.',
+          request: `{
+  "model": "kling-v1.6-standard",
+  "prompt": "the character walks forward slowly",
+  "imageUrl": "https://cdn.../start-frame.jpg",  // 起始帧图片 URL
+  "duration": 5,
+  "ratio": "16:9",
+  "resolution": "720P",
+  "userId": "string",
+  "sessionId": "string",
+  "appId": "mcpx-video-studio",
+  "refImages": [                  // 可选：额外参考图（角色图、场景图）
+    "https://cdn.../character.jpg",
+    "https://cdn.../scene.jpg"
+  ],
+  "audio": false,
+  "audioUrl": "https://cdn.../bg.mp3"  // 可选：背景音频
+}`
+        },
+        {
+          method: 'POST',
+          endpoint: '/ai/video/generate',
+          title: currentLanguage === 'zh' ? '首尾帧插值生成视频' : 'Keyframe Interpolation',
+          description: currentLanguage === 'zh'
+            ? '同时传入 firstFrameUrl 和 lastFrameUrl，AI 在两帧之间插值生成流畅过渡视频。适合精确控制镜头起止画面。'
+            : 'Pass both firstFrameUrl and lastFrameUrl. AI interpolates between them for a smooth transition.',
+          request: `{
+  "model": "kling-v1.6-standard",
+  "prompt": "smooth camera pan from left to right",
+  "firstFrameUrl": "https://cdn.../start.jpg",   // 起始帧
+  "lastFrameUrl": "https://cdn.../end.jpg",       // 结束帧
+  "duration": 5,
+  "ratio": "16:9",
+  "resolution": "720P",
+  "userId": "string",
+  "sessionId": "string",
+  "appId": "mcpx-video-studio",
+  "seed": 42                      // 可选：固定 seed 可复现结果
+}`,
+          response: `// 与文生视频相同的 SSE 格式
+// 视频完成后额外返回 lastFrameUrl（可用于下一镜头的起始帧）
+data: {"choices":[{"delta":{"content":"{\\"lastFrameUrl\\":\\"https://cdn.../last.jpg\\"}"}}]}
+data: {"choices":[{"delta":{"content":"<video>https://cdn.../result.mp4</video>"}}]}
+data: [DONE]`
         }
       ]
     },
@@ -572,13 +904,33 @@ data: {"choices":[{"delta":{"content":"{\\"videoUrl\\":\\"...\\"}"}}]}`
           {currentLanguage === 'zh' ? 'API 文档' : 'API Documentation'}
         </h2>
         
-        <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl p-6 border border-gray-700">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <p className="text-gray-300 mb-1">
-                {currentLanguage === 'zh' ? '认证方式' : 'Authentication'}
-              </p>
-              <code className="text-orange-400 bg-black/30 px-2 py-1 rounded">Authorization: Bearer {'{token}'}</code>
+        <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl p-6 border border-gray-700 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+            <div className="space-y-3 flex-1">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
+                  {currentLanguage === 'zh' ? 'Base URL' : 'Base URL'}
+                </p>
+                <code className="text-green-400 bg-black/40 px-3 py-1.5 rounded-lg text-sm font-mono select-all">
+                  https://www.mcp-x.com/prod-api
+                </code>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
+                  {currentLanguage === 'zh' ? '认证方式' : 'Authentication'}
+                </p>
+                <code className="text-orange-400 bg-black/40 px-3 py-1.5 rounded-lg text-sm font-mono">
+                  Authorization: Bearer {'{token}'}
+                </code>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
+                  {currentLanguage === 'zh' ? '完整请求示例' : 'Full Request Example'}
+                </p>
+                <code className="text-gray-300 bg-black/40 px-3 py-1.5 rounded-lg text-sm font-mono">
+                  POST https://www.mcp-x.com/prod-api/ai/video/generate
+                </code>
+              </div>
             </div>
             <a
               href="https://github.com/TimeCyber/MCP-X-web/blob/main/API_DOCUMENTATION.md"

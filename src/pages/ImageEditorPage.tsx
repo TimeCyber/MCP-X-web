@@ -474,14 +474,16 @@ const ImageEditorPage: React.FC = () => {
   const parseImagesFromMessages = useCallback(async (messages: any[]): Promise<Element[]> => {
     const elements: Element[] = [];
     let positionOffset = 0;
+    const addedUrls = new Set<string>(); // 全局去重，避免同一 URL 重复上画布
 
     for (const msg of messages) {
-      // 只处理 AI 返回的消息
-      if (msg.role === 'assistant' && msg.content) {
-        const content = msg.content;
-        const imageUrls: string[] = [];
-        const videoUrls: string[] = [];
+      if (!msg.content) continue;
 
+      const content = msg.content;
+      const imageUrls: string[] = [];
+      const videoUrls: string[] = [];
+
+      if (msg.role === 'assistant') {
         // 1. 解析 <images> 标签中的图片URL
         const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
         for (const match of imagesTagMatches) {
@@ -500,35 +502,44 @@ const ImageEditorPage: React.FC = () => {
           }
         }
 
-        // 3. 解析直接的图片 URL（http/https 开头，以常见图片扩展名结尾）
+        // 3. 解析直接的图片 URL
         const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
         for (const match of urlMatches) {
           const url = match[1];
-          if (url && !imageUrls.includes(url)) {
-            imageUrls.push(url);
-          }
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
         }
 
-        // 4. 解析直接的视频 URL（http/https 开头，以常见视频扩展名结尾）
+        // 4. 解析直接的视频 URL
         const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
         for (const match of videoUrlMatches) {
           const url = match[1];
-          if (url && !videoUrls.includes(url)) {
-            videoUrls.push(url);
-          }
+          if (url && !videoUrls.includes(url)) videoUrls.push(url);
         }
 
-        // 5. 解析 base64 图片
+        // 5. 解析 base64 图片（assistant 消息中的）
         const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
         for (const match of base64Matches) {
           const url = match[1];
-          if (url && !imageUrls.includes(url)) {
-            imageUrls.push(url);
-          }
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
         }
+      } else if (msg.role === 'user') {
+        // 用户消息：解析上传的 base64 图片（本地上传的图片存在 user 消息里）
+        const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
+        for (const match of base64Matches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
+        }
+        // 用户消息中的 http 图片 URL
+        const httpImgMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
+        for (const match of httpImgMatches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
+        }
+      }
 
         // 加载所有找到的图片
         for (const imageUrl of imageUrls) {
+          if (addedUrls.has(imageUrl)) continue;
           try {
             // 加载图片获取尺寸（直接使用 Image 对象，避免 CORS 问题）
             const img = new Image();
@@ -558,6 +569,7 @@ const ImageEditorPage: React.FC = () => {
             const x = 200 + col * (displayWidth + spacing);
             const y = 200 + row * (displayHeight + spacing);
 
+            addedUrls.add(imageUrl);
             elements.push({
               id: generateId(),
               type: 'image',
@@ -580,21 +592,22 @@ const ImageEditorPage: React.FC = () => {
 
         // 加载所有找到的视频
         for (const videoUrl of videoUrls) {
+          if (addedUrls.has(videoUrl)) continue;
           try {
             // 创建视频元素
             const video = document.createElement('video');
-            video.crossOrigin = 'anonymous';
             video.preload = 'metadata';
             video.muted = false;
             video.playsInline = true;
 
-            // 等待视频元数据加载完成以获取尺寸
-            await new Promise<void>((resolve, reject) => {
+            // 等待视频元数据加载完成以获取尺寸，加载失败时用默认尺寸
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => resolve(), 5000); // 5s 超时
               video.onloadedmetadata = () => {
                 video.currentTime = 0.1; // 跳到第一帧
               };
-              video.onseeked = () => resolve();
-              video.onerror = () => reject(new Error('视频加载失败'));
+              video.onseeked = () => { clearTimeout(timer); resolve(); };
+              video.onerror = () => { clearTimeout(timer); resolve(); }; // 失败也继续，用默认尺寸
               video.src = videoUrl;
               video.load();
             });
@@ -618,6 +631,7 @@ const ImageEditorPage: React.FC = () => {
             const x = 200 + col * (displayWidth + spacing);
             const y = 200 + row * (displayHeight + spacing);
 
+            addedUrls.add(videoUrl);
             elements.push({
               id: generateId(),
               type: 'video',
@@ -659,10 +673,10 @@ const ImageEditorPage: React.FC = () => {
               locked: false
             } as VideoElement);
 
+            addedUrls.add(videoUrl);
             positionOffset++;
           }
         }
-      }
     }
 
     return elements;
@@ -838,9 +852,9 @@ const ImageEditorPage: React.FC = () => {
   const [showInlineVideoControls, setShowInlineVideoControls] = useState(false);
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
   const [selectedVideoModel, setSelectedVideoModel] = useState<string>('');
-  const [videoResolution, setVideoResolution] = useState<'480P' | '720P' | '1080P'>('720P');
+  const [videoResolution, setVideoResolution] = useState<'480P' | '720P' | '1080P'>('1080P');
   const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
-  const [videoDuration, setVideoDuration] = useState<number>(5);
+  const [videoDuration, setVideoDuration] = useState<number>(10);
   const [videoPrompt, setVideoPrompt] = useState<string>('');
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [videoProgress, setVideoProgress] = useState<{ message: string; current?: number; total?: number } | null>(null);
@@ -1841,21 +1855,25 @@ const ImageEditorPage: React.FC = () => {
             }
           }
           
-          // 只有在有新数据时才更新
-          if (hasNewBoards) {
-            console.log('📥 发现新的服务端数据，更新画板列表');
+          // 检查已有 board 中是否有 elements 为空的（缓存残缺场景）
+          const hasEmptyBoards = currentBoards.some(b => !b.elements || b.elements.length === 0);
+          
+          if (hasNewBoards || hasEmptyBoards) {
+            console.log('📥 发现新的服务端数据或存在空画板，更新画板列表');
             const loadedBoards: Board[] = [];
 
             for (const session of response.rows) {
               const sessionId = session.id?.toString() || session.id;
               const boardName = session.sessionTitle || `Board ${loadedBoards.length + 1}`;
               
-              // 检查本地是否已有该 board
+              // 检查本地是否已有该 board 且 elements 不为空
               const existingBoard = currentBoards.find(b => b.sessionId === sessionId);
-              if (existingBoard) {
+              if (existingBoard && existingBoard.elements && existingBoard.elements.length > 0) {
+                // 本地有数据，直接复用
                 loadedBoards.push(existingBoard);
               } else {
-                // 新的 board，加载图片
+                // 新 board 或本地 elements 为空，从服务端重新加载
+                console.log(`重新从服务端加载画板 ${boardName} (${sessionId})`);
                 const imageElements = await loadSessionImages(sessionId);
                 loadedBoards.push({
                   id: sessionId,
@@ -1869,6 +1887,15 @@ const ImageEditorPage: React.FC = () => {
             if (loadedBoards.length > 0) {
               setBoards(loadedBoards);
               saveBoardsToCache(loadedBoards);
+              // 如果当前 board elements 为空，但同步后有数据，立即更新画布
+              const currentBoardIdSnap = loadCurrentBoardIdFromCache();
+              const reloadedCurrent = loadedBoards.find(b => b.id === currentBoardIdSnap || b.sessionId === currentBoardIdSnap);
+              if (reloadedCurrent && reloadedCurrent.elements.length > 0) {
+                setCurrentBoardId(reloadedCurrent.id);
+                setCurrentSessionId(reloadedCurrent.sessionId);
+                setElements([...reloadedCurrent.elements]);
+                console.log('✅ 当前画板已从服务端更新，元素数:', reloadedCurrent.elements.length);
+              }
               console.log('✅ 服务端数据同步完成');
             }
           } else {
@@ -2111,6 +2138,11 @@ const ImageEditorPage: React.FC = () => {
 
   // Handle mouse down for drawing
   const handleMouseDown = (e: React.MouseEvent) => {
+    // 点击画布时自动关闭 board 面板，避免面板开启时拖动画布出现抖动
+    if (showBoardPanel) {
+      setShowBoardPanel(false);
+    }
+
     // 如果正在编辑文字，先保存文字内容
     if (editingTextId) {
       if (textInputValue.trim()) {
@@ -2766,63 +2798,117 @@ const ImageEditorPage: React.FC = () => {
 
   // Handle file upload
   const handleFileUpload = async (file: File) => {
-    try {
-      const { dataUrl, mimeType } = await fileToDataUrl(file);
-      const img = new Image();
+    const isVideo = file.type.startsWith('video/');
 
-      // 创建Promise来等待图片加载完成
-      await new Promise((resolve, reject) => {
-        img.onload = () => resolve(undefined);
-        img.onerror = () => reject(new Error('Failed to load image'));
-        img.src = dataUrl;
-      });
+    if (isVideo) {
+      try {
+        const { dataUrl } = await fileToDataUrl(file);
+        const video = document.createElement('video');
 
-      // 计算图片在canvas中的合适大小和位置
-      const maxWidth = canvasSize.width - 200; // 留出边距
-      const maxHeight = canvasSize.height - 200; // 留出边距
+        await new Promise((resolve, reject) => {
+          video.onloadedmetadata = () => resolve(undefined);
+          video.onerror = () => reject(new Error('Failed to load video'));
+          video.src = dataUrl;
+        });
 
-      let displayWidth = img.width;
-      let displayHeight = img.height;
-      let displayX = 100;
-      let displayY = 100;
+        const maxWidth = canvasSize.width - 200;
+        const maxHeight = canvasSize.height - 200;
 
-      // 如果图片太大，缩放以适应canvas
-      if (img.width > maxWidth || img.height > maxHeight) {
-        const scaleX = maxWidth / img.width;
-        const scaleY = maxHeight / img.height;
-        const scale = Math.min(scaleX, scaleY);
+        let displayWidth = video.videoWidth || 640;
+        let displayHeight = video.videoHeight || 360;
 
-        displayWidth = img.width * scale;
-        displayHeight = img.height * scale;
+        if (displayWidth > maxWidth || displayHeight > maxHeight) {
+          const scaleX = maxWidth / displayWidth;
+          const scaleY = maxHeight / displayHeight;
+          const scale = Math.min(scaleX, scaleY);
+          displayWidth = displayWidth * scale;
+          displayHeight = displayHeight * scale;
+        }
+
+        const displayX = (canvasSize.width - displayWidth) / 2;
+        const displayY = (canvasSize.height - displayHeight) / 2;
+
+        const newElement: VideoElement = {
+          id: generateId(),
+          type: 'video',
+          x: displayX,
+          y: displayY,
+          width: displayWidth,
+          height: displayHeight,
+          videoUrl: dataUrl,
+          href: dataUrl,
+          video: video,
+          isPlaying: false,
+          visible: true,
+          locked: false
+        };
+        setElements(prev => {
+          const newElements = [...prev, newElement];
+          setTimeout(() => saveToHistory(newElements), 0);
+          return newElements;
+        });
+        setSelectedElementIds([newElement.id]);
+      } catch (error) {
+        console.error('Failed to load video:', error);
+        toast.error('Failed to load video');
       }
+    } else {
+      try {
+        const { dataUrl, mimeType } = await fileToDataUrl(file);
+        const img = new Image();
 
-      // 居中显示
-      displayX = (canvasSize.width - displayWidth) / 2;
-      displayY = (canvasSize.height - displayHeight) / 2;
+        // 创建Promise来等待图片加载完成
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve(undefined);
+          img.onerror = () => reject(new Error('Failed to load image'));
+          img.src = dataUrl;
+        });
 
-      const newElement: ImageElement = {
-        id: generateId(),
-        type: 'image',
-        x: displayX,
-        y: displayY,
-        width: displayWidth,
-        height: displayHeight,
-        href: dataUrl,
-        mimeType: mimeType,
-        image: img, // 保存加载完成的图片对象
-        visible: true,
-        locked: false
-      };
-      setElements(prev => {
-        const newElements = [...prev, newElement];
-        // 保存历史记录
-        setTimeout(() => saveToHistory(newElements), 0);
-        return newElements;
-      });
-      setSelectedElementIds([newElement.id]);
-    } catch (error) {
-      console.error('Failed to load image:', error);
-      toast.error('Failed to load image');
+        // 计算图片在canvas中的合适大小和位置
+        const maxWidth = canvasSize.width - 200; // 留出边距
+        const maxHeight = canvasSize.height - 200; // 留出边距
+
+        let displayWidth = img.width;
+        let displayHeight = img.height;
+
+        // 如果图片太大，缩放以适应canvas
+        if (img.width > maxWidth || img.height > maxHeight) {
+          const scaleX = maxWidth / img.width;
+          const scaleY = maxHeight / img.height;
+          const scale = Math.min(scaleX, scaleY);
+
+          displayWidth = img.width * scale;
+          displayHeight = img.height * scale;
+        }
+
+        // 居中显示
+        const displayX = (canvasSize.width - displayWidth) / 2;
+        const displayY = (canvasSize.height - displayHeight) / 2;
+
+        const newElement: ImageElement = {
+          id: generateId(),
+          type: 'image',
+          x: displayX,
+          y: displayY,
+          width: displayWidth,
+          height: displayHeight,
+          href: dataUrl,
+          mimeType: mimeType,
+          image: img, // 保存加载完成的图片对象
+          visible: true,
+          locked: false
+        };
+        setElements(prev => {
+          const newElements = [...prev, newElement];
+          // 保存历史记录
+          setTimeout(() => saveToHistory(newElements), 0);
+          return newElements;
+        });
+        setSelectedElementIds([newElement.id]);
+      } catch (error) {
+        console.error('Failed to load image:', error);
+        toast.error('Failed to load image');
+      }
     }
   };
 
@@ -3241,24 +3327,45 @@ const ImageEditorPage: React.FC = () => {
         selectedElementIds.includes(el.id) && el.type === 'image'
       ) as ImageElement[];
 
-      // 准备起始帧和参考图
+      // 处理@功能：替换prompt和构建referenceMaterials（包含所有@提及元素）
+      const processedPrompt = processPromptForBackend(prompt);
+      const referenceMaterials = await buildReferenceMaterials();
+
+      // 确定 startImageUrl：
+      // 优先使用画布选中的第一张图；没有选中时，取@提及的第一张图片
       let startImageUrl: string | undefined = undefined;
-      let referenceImages: string[] = [];
 
       if (selectedImages.length > 0) {
-        // 使用第一张选中的图片作为起始帧
         startImageUrl = selectedImages[0].href || undefined;
-        
-        // 将所有选中的图片添加到参考图列表
-        referenceImages = selectedImages
+        console.log('使用画布选中图片作为起始帧:', startImageUrl);
+
+        // 画布选中的其他图片（第2张起）追加进 referenceMaterials
+        const extraImages = selectedImages.slice(1)
           .map(img => img.href)
           .filter((href): href is string => !!href);
-        
-        console.log('使用选中图片生成视频:', {
-          startImageUrl,
-          referenceImagesCount: referenceImages.length
-        });
+        for (const url of extraImages) {
+          referenceMaterials.push({ type: 'image', url });
+        }
+      } else if (atMentionedElements.length > 0) {
+        // 按 prompt 中出现顺序找第一个图片类型的 @ 元素作为起始帧
+        const tagPattern = /@(?:图片|视频)\d+/g;
+        let tagMatch: RegExpExecArray | null;
+        const promptCopy = new RegExp(tagPattern);
+        while ((tagMatch = promptCopy.exec(prompt)) !== null) {
+          const tag = tagMatch[0];
+          const atEl = atMentionedElements.find(e => e.tag === tag && e.type === 'image');
+          if (atEl) {
+            startImageUrl = atEl.src;
+            console.log('使用@提及图片作为起始帧:', startImageUrl);
+            break;
+          }
+        }
       }
+
+      console.log('生成视频参数:', {
+        startImageUrl: startImageUrl ? '已设置' : '未设置',
+        referenceMaterialsCount: referenceMaterials.length
+      });
 
       // 创建空白视频占位元素
       videoElementId = generateId();
@@ -3287,15 +3394,11 @@ const ImageEditorPage: React.FC = () => {
       setVideoProgress({ message: '正在初始化视频生成...' });
       setGeneratedVideoUrl(null);
 
-      // 处理@功能：替换prompt和构建referenceMaterials
-      const processedPrompt = processPromptForBackend(prompt);
-      const referenceMaterials = await buildReferenceMaterials();
-
       const result = await generateVideo(
         processedPrompt,
-        startImageUrl, // 使用选中图片作为起始帧
+        startImageUrl,
         undefined, // endImageUrl
-        selectedVideoModel, // 视频模型
+        selectedVideoModel,
         videoResolution,
         videoRatio,
         videoDuration,
@@ -3303,12 +3406,12 @@ const ImageEditorPage: React.FC = () => {
         (progress: any) => {
           setVideoProgress(progress);
         },
-        true, // audio: 默认生成同步音频
+        true, // audio
         undefined, // audioData
         undefined, // audioUrl
         undefined, // seed
-        referenceImages.length > 0 ? referenceImages : undefined, // 传递选中图片作为参考图
-        referenceMaterials // @功能的引用素材
+        undefined, // referenceImages（不再使用，统一走 referenceMaterials）
+        referenceMaterials.length > 0 ? referenceMaterials : undefined
       );
 
       if (result.videoUrl) {
@@ -5792,7 +5895,7 @@ const ImageEditorPage: React.FC = () => {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
