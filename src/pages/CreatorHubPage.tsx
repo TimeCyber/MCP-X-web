@@ -17,7 +17,8 @@ import {
   Eye,
   Play,
   Loader2,
-  Clock
+  Clock,
+  Film
 } from 'lucide-react';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
@@ -26,6 +27,14 @@ import { showcaseApi, ShowcaseCategory, ShowcaseContent } from '../services/show
 import { useLanguage } from '../contexts/LanguageContext';
 import { toast } from '../utils/toast';
 import { createApp } from '../services/appBuildApi';
+
+// 判断 thumbnailUrl 是否为有效图片 URL（排除 "default"、空值等无效值）
+const isValidThumbnail = (url?: string | null): boolean => {
+  if (!url) return false;
+  const trimmed = url.trim().toLowerCase();
+  if (trimmed === 'default' || trimmed === 'null' || trimmed === 'undefined' || trimmed === '') return false;
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+};
 
 // 功能类型定义
 type CreationType = 'text' | 'image' | 'video' | 'web' | 'mcp' | 'agent';
@@ -431,6 +440,120 @@ const DropdownSelector: React.FC<{
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// 长视频镜头列表组件
+const LongVideoList: React.FC<{
+  videoList: { shotNumber: number; actionSummary: string; duration: number; videoUrl: string; imageUrl?: string }[];
+  currentLanguage: string;
+}> = ({ videoList, currentLanguage }) => {
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const activeVideo = videoList[activeIndex];
+
+  const handleEnded = React.useCallback(() => {
+    if (activeIndex < videoList.length - 1) {
+      setActiveIndex(prev => prev + 1);
+    }
+  }, [activeIndex, videoList.length]);
+
+  // 切换到新片段时自动播放，并滚动列表到对应项
+  React.useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.load();
+      videoRef.current.play().catch(() => {});
+    }
+    // 滚动列表到当前激活项
+    if (listRef.current) {
+      const activeItem = listRef.current.querySelector(`[data-idx="${activeIndex}"]`) as HTMLElement;
+      if (activeItem) {
+        activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }, [activeIndex]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <Film className="w-4 h-4 text-indigo-400" />
+        <span className="text-sm font-medium text-gray-400">
+          {currentLanguage === 'zh' ? `视频片段（${videoList.length} 个）` : `Video Clips (${videoList.length})`}
+        </span>
+        {activeIndex < videoList.length - 1 && (
+          <span className="text-xs text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">
+            {currentLanguage === 'zh' ? '自动连播' : 'Auto-play'}
+          </span>
+        )}
+      </div>
+
+      {/* 当前播放的视频 */}
+      <div className="bg-gray-900 rounded-lg overflow-hidden aspect-video">
+        <video
+          ref={videoRef}
+          key={activeVideo.videoUrl}
+          src={activeVideo.videoUrl}
+          controls
+          className="w-full h-full"
+          preload="auto"
+          onEnded={handleEnded}
+        />
+      </div>
+
+      {/* 当前镜头信息 */}
+      <div className="flex items-center gap-2 px-1">
+        <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 text-xs rounded font-mono">
+          Shot {String(activeVideo.shotNumber).padStart(2, '0')}
+        </span>
+        <span className="text-sm text-gray-300 truncate flex-1">{activeVideo.actionSummary}</span>
+        {activeVideo.duration > 0 && (
+          <span className="text-xs text-gray-500 font-mono flex-shrink-0">{activeVideo.duration}s</span>
+        )}
+      </div>
+
+      {/* 视频列表 */}
+      <div ref={listRef} className="bg-gray-900/50 rounded-lg border border-gray-800 overflow-hidden max-h-56 overflow-y-auto">
+        {videoList.map((item, idx) => (
+          <div
+            key={item.videoUrl}
+            data-idx={idx}
+            onClick={() => setActiveIndex(idx)}
+            className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors border-b border-gray-800 last:border-0 ${
+              idx === activeIndex ? 'bg-indigo-500/10 border-l-2 border-l-indigo-500' : 'hover:bg-gray-800/60'
+            }`}
+          >
+            {/* 缩略图 */}
+            <div className="w-12 h-8 bg-gray-800 rounded overflow-hidden flex-shrink-0 relative">
+              {item.imageUrl ? (
+                <img src={item.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <Play className="w-3 h-3 text-gray-600" />
+                </div>
+              )}
+              {idx === activeIndex && (
+                <div className="absolute inset-0 bg-indigo-500/20 flex items-center justify-center">
+                  <Play className="w-3 h-3 text-indigo-400 fill-indigo-400" />
+                </div>
+              )}
+            </div>
+            {/* 镜头编号 */}
+            <span className={`text-xs font-mono flex-shrink-0 w-10 ${idx === activeIndex ? 'text-indigo-400' : 'text-gray-500'}`}>
+              {String(item.shotNumber).padStart(2, '0')}
+            </span>
+            {/* 描述 */}
+            <span className={`text-xs flex-1 truncate ${idx === activeIndex ? 'text-white' : 'text-gray-400'}`}>
+              {item.actionSummary}
+            </span>
+            {/* 时长 */}
+            {item.duration > 0 && (
+              <span className="text-xs text-gray-600 font-mono flex-shrink-0">{item.duration}s</span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -1410,7 +1533,7 @@ export const CreatorHubPage: React.FC = () => {
                       {/* 视频类型：显示第一帧或缩略图 */}
                       {item.contentType === 'video' ? (
                         <>
-                          {item.thumbnailUrl ? (
+                          {isValidThumbnail(item.thumbnailUrl) ? (
                             <img
                               src={item.thumbnailUrl}
                               alt={item.title}
@@ -1593,7 +1716,7 @@ export const CreatorHubPage: React.FC = () => {
                 <div className="space-y-4">
                   {/* 文案类型 */}
                   {selectedShowcase.contentType === 'text' && (
-                    <div className="h-full flex flex-col">
+                    <div className="flex flex-col">
                       <div className="flex items-center gap-2 mb-3">
                         <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
                           <Bot className="w-4 h-4 text-orange-400" />
@@ -1607,7 +1730,7 @@ export const CreatorHubPage: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <div className="flex-1 bg-gray-900/50 rounded-lg p-4 text-gray-300 whitespace-pre-wrap overflow-y-auto">
+                      <div className="bg-gray-900/50 rounded-lg p-4 text-gray-300 whitespace-pre-wrap overflow-y-auto" style={{ minHeight: '5.5rem', maxHeight: '24rem' }}>
                         {selectedShowcase.generatedResult && /^https?:\/\/.*\.(jpg|jpeg|png|gif|bmp|webp|svg)/i.test(selectedShowcase.generatedResult) ? (
                           <img
                             src={selectedShowcase.generatedResult}
@@ -1651,6 +1774,40 @@ export const CreatorHubPage: React.FC = () => {
                     </div>
                   )}
 
+                  {/* 长视频类型 - 视频播放器 + 视频列表 */}
+                  {selectedShowcase.contentType === 'longvideo' && (() => {
+                    try {
+                      const projectData = JSON.parse(selectedShowcase.generatedResult || '{}');
+                      const shots = projectData.shots || [];
+                      const videoList: { shotNumber: number; actionSummary: string; duration: number; videoUrl: string; imageUrl?: string }[] = [];
+                      shots.forEach((shot: any, idx: number) => {
+                        const videoUrl = shot.interval?.videoUrl;
+                        if (videoUrl) {
+                          const startKeyframe = shot.keyframes?.find((kf: any) => kf.type === 'start');
+                          videoList.push({
+                            shotNumber: idx + 1,
+                            actionSummary: shot.actionSummary || `镜头 ${idx + 1}`,
+                            duration: shot.interval?.duration || 0,
+                            videoUrl,
+                            imageUrl: startKeyframe?.imageUrl,
+                          });
+                        }
+                      });
+                      if (videoList.length === 0) return (
+                        <div className="bg-gray-900 rounded-lg p-4 text-gray-400 text-sm">
+                          {currentLanguage === 'zh' ? '暂无视频片段' : 'No video clips yet'}
+                        </div>
+                      );
+                      return <LongVideoList videoList={videoList} currentLanguage={currentLanguage} />;
+                    } catch (e) {
+                      return (
+                        <div className="bg-gray-900 rounded-lg p-4 text-gray-400 text-sm">
+                          {selectedShowcase.title}
+                        </div>
+                      );
+                    }
+                  })()}
+
                   {/* 视频类型 */}
                   {selectedShowcase.contentType === 'video' && (() => {
                     // 解析视频URL - 提取第一个有效的视频链接
@@ -1670,9 +1827,10 @@ export const CreatorHubPage: React.FC = () => {
                           <video
                             src={videoUrl}
                             controls
-                            poster={selectedShowcase.thumbnailUrl || undefined}
+                            autoPlay
+                            poster={isValidThumbnail(selectedShowcase.thumbnailUrl) ? selectedShowcase.thumbnailUrl : undefined}
                             className="w-full h-full"
-                            preload="metadata"
+                            preload="auto"
                             onError={(e) => {
                               // 视频加载失败，显示错误提示
                               const target = e.currentTarget;
@@ -1697,7 +1855,7 @@ export const CreatorHubPage: React.FC = () => {
                           </video>
                         </div>
                         {/* 参考图片缩略图 */}
-                        {selectedShowcase.thumbnailUrl && (
+                        {isValidThumbnail(selectedShowcase.thumbnailUrl) && (
                           <div>
                             <div className="text-xs font-medium text-gray-500 mb-2">
                               {currentLanguage === 'zh' ? '首帧图' : 'First Frame'}
@@ -1733,7 +1891,7 @@ export const CreatorHubPage: React.FC = () => {
                     const { urls: imageUrls, text: promptText } = parsePromptImages(selectedShowcase.originalPrompt);
 
                     return (
-                      <div className="h-full flex flex-col">
+                      <div className="flex flex-col">
                         <div className="flex items-center gap-2 mb-3">
                           <MessageSquare className={`w-4 h-4 ${
                             selectedShowcase.contentType === 'text' ? 'text-blue-400' :
@@ -1770,12 +1928,35 @@ export const CreatorHubPage: React.FC = () => {
                         
                         {/* 文本提示词 */}
                         {promptText && (
-                          <div className="flex-1 bg-gray-900/50 rounded-lg p-4 text-gray-300 text-sm whitespace-pre-wrap overflow-y-auto">
+                          <div className="bg-gray-900/50 rounded-lg p-4 text-gray-300 text-sm whitespace-pre-wrap overflow-y-auto" style={{ minHeight: '5.5rem', maxHeight: '24rem' }}>
                             {promptText}
                           </div>
                         )}
                       </div>
                     );
+                  })()}
+
+                  {/* longvideo 项目简介信息 */}
+                  {selectedShowcase.contentType === 'longvideo' && (() => {
+                    try {
+                      const projectData = JSON.parse(selectedShowcase.generatedResult || '{}');
+                      const targetDuration = projectData.targetDuration;
+                      const videoModel = projectData.videoModel;
+                      const imageModel = projectData.imageModel;
+                      const shots = projectData.shots || [];
+                      const completedShots = shots.filter((s: any) => s.interval?.videoUrl);
+                      return (
+                        <div className="bg-gray-900/50 rounded-lg p-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
+                          {targetDuration && <span>时长目标：<span className="text-gray-300">{targetDuration}</span></span>}
+                          {shots.length > 0 && <span>共 <span className="text-gray-300">{shots.length}</span> 个镜头</span>}
+                          {completedShots.length > 0 && <span>已生成：<span className="text-indigo-400">{completedShots.length}</span> 个视频</span>}
+                          {videoModel && <span>视频模型：<span className="text-gray-300">{videoModel}</span></span>}
+                          {imageModel && <span>图像模型：<span className="text-gray-300">{imageModel}</span></span>}
+                        </div>
+                      );
+                    } catch (e) {
+                      return null;
+                    }
                   })()}
 
                   {/* AI 模型信息 */}

@@ -613,6 +613,218 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
       ]
     },
     {
+      title: currentLanguage === 'zh' ? '会话管理' : 'Session Management',
+      description: currentLanguage === 'zh'
+        ? 'Session 是 AI 对话、图像生成、视频生成等功能的统一上下文容器。创建 Session 后，将 sessionId 传入各业务接口即可关联上下文、保存历史记录。'
+        : 'A Session is the shared context container for AI chat, image generation, and video generation. Create a session first, then pass sessionId to any business API to associate context and persist history.',
+      endpoints: [
+        {
+          method: 'POST',
+          endpoint: '/system/session',
+          title: currentLanguage === 'zh' ? '新建会话（登录用户）' : 'Create Session (Auth)',
+          description: currentLanguage === 'zh' ? '创建一个新的 Session，返回 sessionId 供后续接口使用' : 'Create a new session and return a sessionId for subsequent API calls.',
+          request: `{
+  "userId": "string",
+  "sessionContent": "",       // 初始内容，可为空
+  "sessionTitle": "string",   // 会话标题
+  "remark": "string",         // 备注（可选）
+  "appId": "string"           // 关联应用ID（可选）
+}`,
+          response: `{
+  "code": 200,
+  "data": "1773812492551"   // 新建的 sessionId（大整数字符串）
+}`
+        },
+        {
+          method: 'POST',
+          endpoint: '/web/session',
+          title: currentLanguage === 'zh' ? '新建会话（未登录用户）' : 'Create Session (Guest)',
+          description: currentLanguage === 'zh'
+            ? '未登录用户创建会话，不需要 Authorization Header。'
+            : 'Create a session for guest users. No Authorization header required.',
+          request: `{
+  "userId": "string",
+  "sessionContent": "",
+  "sessionTitle": "string",
+  "remark": "string"
+}`,
+          response: `{
+  "code": 200,
+  "data": "1773812492551"
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/system/session/list',
+          title: currentLanguage === 'zh' ? '会话列表（登录用户）' : 'Session List (Auth)',
+          description: currentLanguage === 'zh'
+            ? '获取当前用户的会话列表，可按 appId 过滤，isDelete=0 只返回未删除的会话。'
+            : 'Get session list for current user. Filter by appId; isDelete=0 returns only active sessions.',
+          params: [
+            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' },
+            { name: 'appId', type: 'string', description: currentLanguage === 'zh' ? '应用ID（可选）' : 'App ID (optional)' },
+            { name: 'isDelete', type: 'number', description: currentLanguage === 'zh' ? '是否删除，默认 0' : 'Is deleted, default 0' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": "string",
+      "sessionTitle": "string",
+      "sessionContent": "string",
+      "remark": "string",
+      "userId": "string",
+      "createTime": "string",
+      "updateTime": "string"
+    }
+  ]
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/session/list',
+          title: currentLanguage === 'zh' ? '会话列表（未登录用户）' : 'Session List (Guest)',
+          description: currentLanguage === 'zh' ? '为未登录用户获取会话列表' : 'Get session list for unauthenticated/web users',
+          params: [
+            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": "string",
+      "sessionTitle": "string",
+      "sessionContent": "string",
+      "userId": "string",
+      "createTime": "string",
+      "updateTime": "string"
+    }
+  ]
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/system/message/list',
+          title: currentLanguage === 'zh' ? '获取聊天记录（登录用户）' : 'Get Messages (Auth)',
+          description: currentLanguage === 'zh' ? '获取指定 Session 下的全部聊天记录，按时间升序返回' : 'Fetch all messages for a given session, ordered by time ascending.',
+          params: [
+            { name: 'sessionId', type: 'string', description: currentLanguage === 'zh' ? '会话ID' : 'Session ID' },
+            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": "string",
+      "sessionId": "string",
+      "role": "user | assistant | system",
+      "content": "string",
+      "userId": "string",
+      "modelName": "gpt-4o",
+      "deductCost": "0.02",
+      "totalTokens": 512,
+      "createTime": "string",
+      "updateTime": "string",
+      "files": [
+        { "uid": "string", "name": "file.pdf", "type": "application/pdf", "size": 102400, "url": "string" }
+      ]
+    }
+  ]
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/message/list',
+          title: currentLanguage === 'zh' ? '获取聊天记录（未登录用户）' : 'Get Messages (Guest)',
+          description: currentLanguage === 'zh'
+            ? '未登录用户获取会话聊天记录，字段结构与登录版本相同。'
+            : 'Fetch session messages for guest users. Same response structure as the auth version.',
+          params: [
+            { name: 'sessionId', type: 'string', description: currentLanguage === 'zh' ? '会话ID' : 'Session ID' },
+            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": "string",
+      "sessionId": "string",
+      "role": "user | assistant | system",
+      "content": "string",
+      "userId": "string",
+      "modelName": "string",
+      "deductCost": "string",
+      "totalTokens": 0,
+      "createTime": "string",
+      "files": []
+    }
+  ]
+}`
+        },
+        {
+          method: 'PUT',
+          endpoint: '/system/session',
+          title: currentLanguage === 'zh' ? '更新会话' : 'Update Session',
+          description: currentLanguage === 'zh' ? '更新会话标题或备注' : 'Update session title or remark',
+          request: `{
+  "id": "string",            // 会话ID（id 或 sessionId 二选一）
+  "sessionId": "string",     // 同上
+  "sessionTitle": "string",  // 可选
+  "remark": "string"         // 可选
+}`
+        },
+        {
+          method: 'PUT',
+          endpoint: '/web/session/content',
+          title: currentLanguage === 'zh' ? '更新会话内容' : 'Update Session Content',
+          description: currentLanguage === 'zh' ? '保存会话内容（如视频项目 JSON），用于持久化工作区状态' : 'Save session content (e.g. video project JSON) for workspace persistence',
+          request: `{
+  "id": "string",           // sessionId
+  "content": "string",      // 内容（JSON字符串等）
+  "sessionTitle": "string"  // 可选
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/session/content/list/{sessionId}',
+          title: currentLanguage === 'zh' ? '会话内容历史' : 'Session Content History',
+          description: currentLanguage === 'zh' ? '获取会话内容的历史版本列表（如视频项目的历史快照）' : 'Get history of session content versions (e.g. video project snapshots)',
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": "string",
+      "sessionId": "string",
+      "content": "string",        // 保存的内容（JSON字符串等）
+      "sessionTitle": "string",
+      "createTime": "string"
+    }
+  ]
+}`
+        },
+        {
+          method: 'DELETE',
+          endpoint: '/web/session/{sessionId}',
+          title: currentLanguage === 'zh' ? '删除会话' : 'Delete Session',
+          description: currentLanguage === 'zh' ? '删除指定会话（软删除）' : 'Delete a specific session (soft delete)',
+          response: `{
+  "code": 200,
+  "msg": "操作成功"
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/ai-query/results/{queryId}/page',
+          title: currentLanguage === 'zh' ? 'AI 查询结果（参考链接）' : 'AI Query Results',
+          description: currentLanguage === 'zh' ? '分页获取 AI 查询的参考链接结果' : 'Paginated AI query reference link results',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
+          ]
+        }
+      ]
+    },
+    {
       title: currentLanguage === 'zh' ? 'AI 对话' : 'AI Chat',
       endpoints: [
         {
@@ -634,11 +846,18 @@ data: [DONE]`
         {
           method: 'POST',
           endpoint: '/chat/send-with-files',
-          title: currentLanguage === 'zh' ? '带文件对话' : 'Chat with Files',
-          description: currentLanguage === 'zh' ? '支持上传文件的对话接口' : 'Conversation with file uploads',
+          title: currentLanguage === 'zh' ? '带文件对话 (SSE)' : 'Chat with Files (SSE)',
+          description: currentLanguage === 'zh' ? '支持上传文件的流式对话接口，使用 multipart/form-data' : 'Streaming conversation with file uploads, multipart/form-data',
           params: [
-            { name: 'file', type: 'File[]', description: '文件列表' },
-            { name: 'messages', type: 'string', description: 'JSON 格式的消息数组' }
+            { name: 'file', type: 'File[]', description: currentLanguage === 'zh' ? '文件列表（可多个）' : 'File list (multiple allowed)' },
+            { name: 'messages', type: 'string', description: currentLanguage === 'zh' ? 'JSON 格式的消息数组' : 'JSON-encoded messages array' },
+            { name: 'model', type: 'string', description: currentLanguage === 'zh' ? '模型名称' : 'Model name' },
+            { name: 'sessionId', type: 'string', description: currentLanguage === 'zh' ? '会话ID（可选）' : 'Session ID (optional)' },
+            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID（可选）' : 'User ID (optional)' },
+            { name: 'stream', type: 'boolean', description: currentLanguage === 'zh' ? '是否流式，固定 true' : 'Streaming flag, always true' },
+            { name: 'internet', type: 'boolean', description: currentLanguage === 'zh' ? '是否联网搜索' : 'Enable web search' },
+            { name: 'kid', type: 'string', description: currentLanguage === 'zh' ? '知识库ID（可选）' : 'Knowledge base ID (optional)' },
+            { name: 'agent', type: 'string', description: currentLanguage === 'zh' ? 'Agent名称（可选）' : 'Agent name (optional)' }
           ]
         }
       ]
@@ -673,7 +892,7 @@ data: [DONE]`
         },
         {
           method: 'POST',
-          endpoint: '/ai/image/generate',
+          endpoint: '/ai/image/edit',
           title: currentLanguage === 'zh' ? '参考图生图（图生图）' : 'Reference Image-to-Image',
           description: currentLanguage === 'zh'
             ? '传入一张或多张参考图时，自动切换为图生图模式（调用 /ai/image/edit），保持参考图的视觉风格和角色一致性。支持场景图 + 多张角色定妆照同时传入。'
@@ -816,18 +1035,97 @@ data: [DONE]`
           request: `{
   "appName": "My App",
   "message": "Create a landing page",
-  "codeGenType": "REACT"
+  "initPrompt": "string",
+  "codeGenType": "HTML | REACT | VUE | STATIC",
+  "userId": "string"
+}`,
+          response: `{
+  "code": 200,
+  "data": { "id": "app-id-string" }
 }`
         },
         {
           method: 'GET',
-          endpoint: '/app/webgen/chat/gen/code',
-          title: currentLanguage === 'zh' ? '生成代码' : 'Generate Code',
-          description: currentLanguage === 'zh' ? '对话式生成代码 (SSE)' : 'Conversational code generation (SSE)',
+          endpoint: '/app/webgen/{appId}',
+          title: currentLanguage === 'zh' ? '获取应用信息' : 'Get App Info',
+          description: currentLanguage === 'zh' ? '获取指定应用的详细信息' : 'Get details of a specific app',
           params: [
-            { name: 'appId', type: 'string', description: '应用ID' },
-            { name: 'message', type: 'string', description: '用户指令' }
+            { name: 'id', type: 'string', description: currentLanguage === 'zh' ? '应用ID（query param）' : 'App ID (query param)' }
           ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/app/webgen/list',
+          title: currentLanguage === 'zh' ? '我的应用列表' : 'My Apps',
+          description: currentLanguage === 'zh' ? '分页获取当前用户的应用列表' : 'Paginated list of current user apps',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' },
+            { name: 'appName', type: 'string', description: currentLanguage === 'zh' ? '应用名称（可选过滤）' : 'App name filter (optional)' }
+          ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/app/webgen/chat/gen/code',
+          title: currentLanguage === 'zh' ? '对话生成代码 (SSE)' : 'Generate Code (SSE)',
+          description: currentLanguage === 'zh' ? '对话式生成/修改代码，SSE 流式返回' : 'Conversational code generation via SSE stream',
+          params: [
+            { name: 'appId', type: 'string', description: currentLanguage === 'zh' ? '应用ID' : 'App ID' },
+            { name: 'message', type: 'string', description: currentLanguage === 'zh' ? '用户指令' : 'User instruction' },
+            { name: 'stream', type: 'boolean', description: currentLanguage === 'zh' ? '固定传 true' : 'Always true' }
+          ],
+          response: `data: {"d":"<html>..."}
+data: [DONE]`
+        },
+        {
+          method: 'GET',
+          endpoint: '/app/webgen/chat/history',
+          title: currentLanguage === 'zh' ? '聊天历史' : 'Chat History',
+          description: currentLanguage === 'zh' ? '获取应用的对话历史记录' : 'Get chat history for an app',
+          params: [
+            { name: 'appId', type: 'string', description: currentLanguage === 'zh' ? '应用ID' : 'App ID' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' },
+            { name: 'lastCreateTime', type: 'string', description: currentLanguage === 'zh' ? '游标时间（可选）' : 'Cursor time (optional)' }
+          ]
+        },
+        {
+          method: 'POST',
+          endpoint: '/app/webgen/deploy',
+          title: currentLanguage === 'zh' ? '部署应用' : 'Deploy App',
+          description: currentLanguage === 'zh' ? '将应用部署到云端，返回部署 URL' : 'Deploy app to cloud, returns deploy URL',
+          request: `"app-id-string"  // 直接传应用ID字符串`,
+          response: `{
+  "code": 200,
+  "data": {
+    "deployUrl": "https://...",
+    "deployKey": "html_appId"
+  }
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/app/webgen/download/{appId}',
+          title: currentLanguage === 'zh' ? '下载代码' : 'Download Code',
+          description: currentLanguage === 'zh' ? '下载应用源代码压缩包' : 'Download app source code as archive'
+        },
+        {
+          method: 'POST',
+          endpoint: '/app/webgen/delete',
+          title: currentLanguage === 'zh' ? '删除应用' : 'Delete App',
+          description: currentLanguage === 'zh' ? '删除指定应用' : 'Delete a specific app',
+          request: `{ "id": "app-id-string" }`
+        },
+        {
+          method: 'POST',
+          endpoint: '/app/webgen/update',
+          title: currentLanguage === 'zh' ? '更新应用信息' : 'Update App',
+          description: currentLanguage === 'zh' ? '更新应用名称、封面等信息' : 'Update app name, cover, etc.',
+          request: `{
+  "id": "string",
+  "appName": "string",
+  "cover": "string",    // 可选
+  "priority": 0         // 可选
+}`
         }
       ]
     },
@@ -836,22 +1134,84 @@ data: [DONE]`
       endpoints: [
         {
           method: 'GET',
+          endpoint: '/web/mcp/home/server',
+          title: currentLanguage === 'zh' ? '首页服务列表' : 'Home Server List',
+          description: currentLanguage === 'zh' ? '获取首页展示的 MCP 服务列表' : 'Get MCP servers shown on the home page'
+        },
+        {
+          method: 'GET',
           endpoint: '/web/mcp/server/list',
-          title: currentLanguage === 'zh' ? '服务列表' : 'Server List',
-          description: currentLanguage === 'zh' ? '获取可用的 MCP 服务列表' : 'Get list of available MCP servers'
+          title: currentLanguage === 'zh' ? '全部服务列表' : 'All Servers',
+          description: currentLanguage === 'zh' ? '获取所有可用的 MCP 服务列表' : 'Get all available MCP servers'
         },
         {
           method: 'GET',
           endpoint: '/web/mcp/server/detail/{id}',
           title: currentLanguage === 'zh' ? '服务详情' : 'Server Detail',
-          description: currentLanguage === 'zh' ? '获取特定服务的详细信息' : 'Get details for a specific server',
-          response: `{
-  "code": 200,
-  "data": {
-    "name": "google-search",
-    "tools": ["search", "get_page_content"]
-  }
+          description: currentLanguage === 'zh' ? '获取特定服务的详细信息，包含工具列表、README、安装配置等' : 'Get full details for a server including tools, README, and install config'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/mcp/recent',
+          title: currentLanguage === 'zh' ? '最近收录' : 'Recent Servers',
+          description: currentLanguage === 'zh' ? '获取最近新收录的 MCP 服务' : 'Get recently added MCP servers'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/mcp/home/category',
+          title: currentLanguage === 'zh' ? '服务分类' : 'Server Categories',
+          description: currentLanguage === 'zh' ? '获取 MCP 服务分类列表' : 'Get MCP server category list'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/mcp/search',
+          title: currentLanguage === 'zh' ? '搜索服务' : 'Search Servers',
+          description: currentLanguage === 'zh' ? '按关键词搜索 MCP 服务' : 'Search MCP servers by keyword',
+          params: [
+            { name: 'key', type: 'string', description: currentLanguage === 'zh' ? '搜索关键词' : 'Search keyword' }
+          ]
+        },
+        {
+          method: 'POST',
+          endpoint: '/web/mcp/member/addserver',
+          title: currentLanguage === 'zh' ? '提交服务' : 'Submit Server',
+          description: currentLanguage === 'zh' ? '提交新的 MCP 服务收录申请' : 'Submit a new MCP server for listing',
+          request: `{
+  "name": "string",
+  "handle": "string",
+  "description": "string",
+  "documentation": "string"
 }`
+        },
+        {
+          method: 'GET',
+          endpoint: '/user/userMcpServer/list',
+          title: currentLanguage === 'zh' ? '我的 MCP 配置' : 'My MCP Configs',
+          description: currentLanguage === 'zh' ? '获取当前用户保存的 MCP 服务配置列表' : 'Get current user saved MCP server configs'
+        },
+        {
+          method: 'POST',
+          endpoint: '/user/userMcpServer',
+          title: currentLanguage === 'zh' ? '新增 MCP 配置' : 'Add MCP Config',
+          description: currentLanguage === 'zh' ? '新增用户 MCP 服务配置' : 'Add a user MCP server config'
+        },
+        {
+          method: 'PUT',
+          endpoint: '/user/userMcpServer',
+          title: currentLanguage === 'zh' ? '更新 MCP 配置' : 'Update MCP Config',
+          description: currentLanguage === 'zh' ? '更新用户 MCP 服务配置（含自定义 serviceConfig）' : 'Update user MCP config including custom serviceConfig'
+        },
+        {
+          method: 'DELETE',
+          endpoint: '/user/userMcpServer/{ids}',
+          title: currentLanguage === 'zh' ? '删除 MCP 配置' : 'Delete MCP Config',
+          description: currentLanguage === 'zh' ? '删除用户 MCP 配置，支持逗号分隔多个ID' : 'Delete user MCP configs, supports comma-separated IDs'
+        },
+        {
+          method: 'POST',
+          endpoint: '/user/userMcpServer/start/{ids}',
+          title: currentLanguage === 'zh' ? '启动 MCP 服务' : 'Start MCP Service',
+          description: currentLanguage === 'zh' ? '启动指定的用户 MCP 服务' : 'Start specified user MCP services'
         }
       ]
     },
@@ -862,17 +1222,204 @@ data: [DONE]`
           method: 'GET',
           endpoint: '/knowledge/list',
           title: currentLanguage === 'zh' ? '知识库列表' : 'Knowledge List',
-          description: currentLanguage === 'zh' ? '获取用户的知识库列表' : 'Get user knowledge bases'
+          description: currentLanguage === 'zh' ? '分页获取用户的知识库列表' : 'Paginated list of user knowledge bases',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
+          ]
+        },
+        {
+          method: 'POST',
+          endpoint: '/knowledge/save',
+          title: currentLanguage === 'zh' ? '新增知识库' : 'Create Knowledge Base',
+          description: currentLanguage === 'zh' ? '创建新的知识库' : 'Create a new knowledge base'
+        },
+        {
+          method: 'POST',
+          endpoint: '/knowledge/edit',
+          title: currentLanguage === 'zh' ? '编辑知识库' : 'Edit Knowledge Base',
+          description: currentLanguage === 'zh' ? '修改知识库信息' : 'Update knowledge base info'
+        },
+        {
+          method: 'POST',
+          endpoint: '/knowledge/remove/{id}',
+          title: currentLanguage === 'zh' ? '删除知识库' : 'Delete Knowledge Base',
+          description: currentLanguage === 'zh' ? '删除指定知识库' : 'Delete a knowledge base by ID'
+        },
+        {
+          method: 'GET',
+          endpoint: '/knowledge/detail/{id}',
+          title: currentLanguage === 'zh' ? '知识库附件列表' : 'Knowledge Attachments',
+          description: currentLanguage === 'zh' ? '获取知识库下的附件列表' : 'Get attachments for a knowledge base'
         },
         {
           method: 'POST',
           endpoint: '/knowledge/attach/upload',
           title: currentLanguage === 'zh' ? '上传附件' : 'Upload Attachment',
-          description: currentLanguage === 'zh' ? '上传文档到知识库' : 'Upload documents to knowledge base',
+          description: currentLanguage === 'zh' ? '上传文档到知识库（multipart/form-data）' : 'Upload document to knowledge base (multipart/form-data)',
           params: [
-            { name: 'file', type: 'File', description: '文档文件' },
-            { name: 'kid', type: 'string', description: '知识库ID' }
+            { name: 'file', type: 'File', description: currentLanguage === 'zh' ? '文档文件' : 'Document file' },
+            { name: 'kid', type: 'string', description: currentLanguage === 'zh' ? '知识库ID' : 'Knowledge base ID' }
           ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/knowledge/attach/info/{id}',
+          title: currentLanguage === 'zh' ? '附件详情' : 'Attachment Detail',
+          description: currentLanguage === 'zh' ? '获取单个附件的详细信息' : 'Get details of a single attachment'
+        },
+        {
+          method: 'POST',
+          endpoint: '/knowledge/attach/remove/{kid}',
+          title: currentLanguage === 'zh' ? '删除附件' : 'Delete Attachment',
+          description: currentLanguage === 'zh' ? '删除知识库附件' : 'Delete a knowledge base attachment'
+        },
+        {
+          method: 'GET',
+          endpoint: '/knowledge/fragment/list/{docId}',
+          title: currentLanguage === 'zh' ? '知识片段列表' : 'Fragment List',
+          description: currentLanguage === 'zh' ? '获取文档的知识片段列表' : 'Get knowledge fragments for a document'
+        },
+        {
+          method: 'POST',
+          endpoint: '/knowledge/translationByFile',
+          title: currentLanguage === 'zh' ? '文件翻译' : 'File Translation',
+          description: currentLanguage === 'zh' ? '上传文件并翻译为目标语言' : 'Upload and translate a file to target language',
+          params: [
+            { name: 'file', type: 'File', description: currentLanguage === 'zh' ? '待翻译文件' : 'File to translate' },
+            { name: 'targetLanguage', type: 'string', description: currentLanguage === 'zh' ? '目标语言' : 'Target language' }
+          ]
+        }
+      ]
+    },
+    {
+      title: currentLanguage === 'zh' ? '精选展示' : 'Showcase',
+      endpoints: [
+        {
+          method: 'GET',
+          endpoint: '/showcase/category/list',
+          title: currentLanguage === 'zh' ? '展示分类列表' : 'Showcase Categories',
+          description: currentLanguage === 'zh' ? '获取精选内容的分类列表，可按 contentType 过滤' : 'Get showcase content categories, filterable by contentType',
+          params: [
+            { name: 'categoryName', type: 'string', description: currentLanguage === 'zh' ? '分类名称（可选）' : 'Category name (optional)' },
+            { name: 'contentType', type: 'string', description: 'text | image | video' },
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": 1,
+      "categoryName": "string",
+      "contentType": "text | image | video",
+      "sort": 0,
+      "status": "0"
+    }
+  ],
+  "total": 10
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/showcase/showcase/list',
+          title: currentLanguage === 'zh' ? '精选内容列表' : 'Showcase List',
+          description: currentLanguage === 'zh' ? '获取精选内容列表，支持按分类、类型、推荐状态过滤' : 'Get showcase content list with category/type/recommended filters',
+          params: [
+            { name: 'categoryId', type: 'number', description: currentLanguage === 'zh' ? '分类ID（可选）' : 'Category ID (optional)' },
+            { name: 'contentType', type: 'string', description: 'text | image | video' },
+            { name: 'isRecommended', type: 'string', description: currentLanguage === 'zh' ? '是否推荐（可选）' : 'Is recommended (optional)' },
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
+          ],
+          response: `{
+  "code": 200,
+  "rows": [
+    {
+      "id": 1,
+      "title": "string",
+      "categoryId": 1,
+      "contentType": "image",
+      "originalPrompt": "string",
+      "generatedResult": "https://cdn.../result.png",
+      "thumbnailUrl": "string",
+      "aiModel": "string",
+      "likeCount": 0,
+      "viewCount": 0,
+      "favoriteCount": 0,
+      "isRecommended": "1",
+      "createTime": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 100
+}`
+        },
+        {
+          method: 'POST',
+          endpoint: '/showcase/showcase/view/{id}',
+          title: currentLanguage === 'zh' ? '增加浏览数' : 'Increment View Count',
+          description: currentLanguage === 'zh' ? '记录一次内容浏览，浏览数 +1' : 'Record a view, increments viewCount by 1'
+        },
+        {
+          method: 'POST',
+          endpoint: '/showcase/showcase/like/{id}',
+          title: currentLanguage === 'zh' ? '点赞' : 'Like',
+          description: currentLanguage === 'zh' ? '对精选内容点赞' : 'Like a showcase item'
+        },
+        {
+          method: 'POST',
+          endpoint: '/showcase/showcase/favorite/{id}',
+          title: currentLanguage === 'zh' ? '收藏' : 'Favorite',
+          description: currentLanguage === 'zh' ? '收藏精选内容' : 'Favorite a showcase item'
+        }
+      ]
+    },
+    {
+      title: currentLanguage === 'zh' ? '人工反馈' : 'Human Feedback',
+      endpoints: [
+        {
+          method: 'GET',
+          endpoint: '/chat/human-feedback/status/{threadId}',
+          title: currentLanguage === 'zh' ? '检查反馈状态' : 'Check Feedback Status',
+          description: currentLanguage === 'zh' ? '检查指定线程是否有等待人工反馈的任务' : 'Check if a thread has a pending human feedback task',
+          response: `{
+  "code": 200,
+  "data": {
+    "isAwaitingFeedback": true,
+    "threadId": "string"
+  }
+}`
+        },
+        {
+          method: 'GET',
+          endpoint: '/chat/human-feedback/pending/{threadId}',
+          title: currentLanguage === 'zh' ? '获取待反馈任务' : 'Get Pending Task',
+          description: currentLanguage === 'zh' ? '获取等待人工反馈的任务详情' : 'Get details of the pending human feedback task',
+          response: `{
+  "code": 200,
+  "data": {
+    "taskId": "string",
+    "threadId": "string",
+    "question": "string",
+    "options": ["string"],
+    "createTime": "string"
+  }
+}`
+        },
+        {
+          method: 'POST',
+          endpoint: '/chat/human-feedback/submit',
+          title: currentLanguage === 'zh' ? '提交人工反馈' : 'Submit Feedback',
+          description: currentLanguage === 'zh' ? '提交人工反馈结果，继续 AI 工作流' : 'Submit human feedback to resume the AI workflow',
+          request: `{
+  "taskId": "string",
+  "threadId": "string",
+  "feedback": "string"  // 用户选择或输入的反馈内容
+}`,
+          response: `{
+  "code": 200,
+  "data": "submitted"
+}`
         }
       ]
     },
@@ -888,9 +1435,100 @@ data: [DONE]`
         {
           method: 'POST',
           endpoint: '/web/pay/wechat/create',
-          title: currentLanguage === 'zh' ? '创建订单' : 'Create Order',
-          description: currentLanguage === 'zh' ? '创建微信支付订单' : 'Create WeChat pay order',
+          title: currentLanguage === 'zh' ? '创建微信支付订单' : 'Create WeChat Order',
+          description: currentLanguage === 'zh' ? '创建微信支付订单，返回支付二维码等信息' : 'Create a WeChat pay order, returns QR code info',
           request: `{ "planId": 1 }`
+        },
+        {
+          method: 'POST',
+          endpoint: '/web/pay/wechat/continue',
+          title: currentLanguage === 'zh' ? '继续支付' : 'Continue Payment',
+          description: currentLanguage === 'zh' ? '继续未完成的微信支付订单' : 'Continue an unfinished WeChat pay order',
+          request: `{ "orderNo": "string" }`
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/pay/order/detail/{orderNo}',
+          title: currentLanguage === 'zh' ? '订单详情' : 'Order Detail',
+          description: currentLanguage === 'zh' ? '根据订单号查询订单详情' : 'Query order details by order number'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/pay/order/list',
+          title: currentLanguage === 'zh' ? '我的订单' : 'My Orders',
+          description: currentLanguage === 'zh' ? '分页获取当前用户的订单列表' : 'Paginated list of current user orders',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
+          ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/pay/me/balance-plan',
+          title: currentLanguage === 'zh' ? '余额与套餐' : 'Balance & Plan',
+          description: currentLanguage === 'zh' ? '查询当前用户的余额和订阅套餐信息' : 'Get current user balance and subscription plan'
+        }
+      ]
+    },
+    {
+      title: currentLanguage === 'zh' ? 'Agent' : 'Agent',
+      endpoints: [
+        {
+          method: 'GET',
+          endpoint: '/web/agent/categories',
+          title: currentLanguage === 'zh' ? 'Agent 分类' : 'Agent Categories',
+          description: currentLanguage === 'zh' ? '获取 Agent 分类列表' : 'Get Agent category list'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/list',
+          title: currentLanguage === 'zh' ? 'Agent 列表' : 'Agent List',
+          description: currentLanguage === 'zh' ? '分页获取 Agent 列表，可按分类过滤' : 'Paginated Agent list, filterable by category',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' },
+            { name: 'categoryId', type: 'number', description: currentLanguage === 'zh' ? '分类ID（可选）' : 'Category ID (optional)' },
+            { name: 'status', type: 'number', description: currentLanguage === 'zh' ? '状态，默认 1' : 'Status, default 1' }
+          ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/detail/{id}',
+          title: currentLanguage === 'zh' ? 'Agent 详情' : 'Agent Detail',
+          description: currentLanguage === 'zh' ? '获取指定 Agent 的详细信息' : 'Get details of a specific Agent'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/search',
+          title: currentLanguage === 'zh' ? '搜索 Agent' : 'Search Agents',
+          description: currentLanguage === 'zh' ? '按关键词搜索 Agent' : 'Search Agents by keyword',
+          params: [
+            { name: 'key', type: 'string', description: currentLanguage === 'zh' ? '搜索关键词' : 'Search keyword' }
+          ]
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/featured',
+          title: currentLanguage === 'zh' ? '精选 Agent' : 'Featured Agents',
+          description: currentLanguage === 'zh' ? '获取精选推荐的 Agent 列表' : 'Get featured/recommended Agents'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/recent',
+          title: currentLanguage === 'zh' ? '最近发布' : 'Recent Agents',
+          description: currentLanguage === 'zh' ? '获取最近发布的 Agent 列表' : 'Get recently published Agents'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/category/{categoryId}',
+          title: currentLanguage === 'zh' ? '按分类获取 Agent' : 'Agents by Category',
+          description: currentLanguage === 'zh' ? '获取指定分类下的 Agent 列表' : 'Get Agents under a specific category'
+        },
+        {
+          method: 'GET',
+          endpoint: '/web/agent/activity/{id}',
+          title: currentLanguage === 'zh' ? '记录使用活动' : 'Track Activity',
+          description: currentLanguage === 'zh' ? '记录 Agent 使用活动（用于统计）' : 'Record Agent usage activity (for analytics)'
         }
       ]
     }
@@ -951,6 +1589,9 @@ data: [DONE]`
             <div className="w-2 h-2 rounded-full bg-orange-500/50" />
             {group.title}
           </h3>
+          {'description' in group && group.description && (
+            <p className="text-gray-400 text-sm leading-relaxed">{group.description}</p>
+          )}
 
           <div className="space-y-4">
             {group.endpoints.map((endpoint, eIdx) => (
