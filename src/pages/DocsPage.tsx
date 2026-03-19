@@ -620,7 +620,7 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
       endpoints: [
         {
           method: 'POST',
-          endpoint: '/system/session',
+          endpoint: '/web/session',
           title: currentLanguage === 'zh' ? '新建会话（登录用户）' : 'Create Session (Auth)',
           description: currentLanguage === 'zh' ? '创建一个新的 Session，返回 sessionId 供后续接口使用' : 'Create a new session and return a sessionId for subsequent API calls.',
           request: `{
@@ -635,27 +635,10 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
   "data": "1773812492551"   // 新建的 sessionId（大整数字符串）
 }`
         },
-        {
-          method: 'POST',
-          endpoint: '/web/session',
-          title: currentLanguage === 'zh' ? '新建会话（未登录用户）' : 'Create Session (Guest)',
-          description: currentLanguage === 'zh'
-            ? '未登录用户创建会话，不需要 Authorization Header。'
-            : 'Create a session for guest users. No Authorization header required.',
-          request: `{
-  "userId": "string",
-  "sessionContent": "",
-  "sessionTitle": "string",
-  "remark": "string"
-}`,
-          response: `{
-  "code": 200,
-  "data": "1773812492551"
-}`
-        },
+
         {
           method: 'GET',
-          endpoint: '/system/session/list',
+          endpoint: '/web/session/list',
           title: currentLanguage === 'zh' ? '会话列表（登录用户）' : 'Session List (Auth)',
           description: currentLanguage === 'zh'
             ? '获取当前用户的会话列表，可按 appId 过滤，isDelete=0 只返回未删除的会话。'
@@ -680,31 +663,10 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
   ]
 }`
         },
+
         {
           method: 'GET',
-          endpoint: '/web/session/list',
-          title: currentLanguage === 'zh' ? '会话列表（未登录用户）' : 'Session List (Guest)',
-          description: currentLanguage === 'zh' ? '为未登录用户获取会话列表' : 'Get session list for unauthenticated/web users',
-          params: [
-            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' }
-          ],
-          response: `{
-  "code": 200,
-  "rows": [
-    {
-      "id": "string",
-      "sessionTitle": "string",
-      "sessionContent": "string",
-      "userId": "string",
-      "createTime": "string",
-      "updateTime": "string"
-    }
-  ]
-}`
-        },
-        {
-          method: 'GET',
-          endpoint: '/system/message/list',
+          endpoint: '/web/message/list',
           title: currentLanguage === 'zh' ? '获取聊天记录（登录用户）' : 'Get Messages (Auth)',
           description: currentLanguage === 'zh' ? '获取指定 Session 下的全部聊天记录，按时间升序返回' : 'Fetch all messages for a given session, ordered by time ascending.',
           params: [
@@ -732,38 +694,10 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
   ]
 }`
         },
-        {
-          method: 'GET',
-          endpoint: '/web/message/list',
-          title: currentLanguage === 'zh' ? '获取聊天记录（未登录用户）' : 'Get Messages (Guest)',
-          description: currentLanguage === 'zh'
-            ? '未登录用户获取会话聊天记录，字段结构与登录版本相同。'
-            : 'Fetch session messages for guest users. Same response structure as the auth version.',
-          params: [
-            { name: 'sessionId', type: 'string', description: currentLanguage === 'zh' ? '会话ID' : 'Session ID' },
-            { name: 'userId', type: 'string', description: currentLanguage === 'zh' ? '用户ID' : 'User ID' }
-          ],
-          response: `{
-  "code": 200,
-  "rows": [
-    {
-      "id": "string",
-      "sessionId": "string",
-      "role": "user | assistant | system",
-      "content": "string",
-      "userId": "string",
-      "modelName": "string",
-      "deductCost": "string",
-      "totalTokens": 0,
-      "createTime": "string",
-      "files": []
-    }
-  ]
-}`
-        },
+
         {
           method: 'PUT',
-          endpoint: '/system/session',
+          endpoint: '/web/session',
           title: currentLanguage === 'zh' ? '更新会话' : 'Update Session',
           description: currentLanguage === 'zh' ? '更新会话标题或备注' : 'Update session title or remark',
           request: `{
