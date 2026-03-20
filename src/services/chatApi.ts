@@ -24,6 +24,34 @@ apiClient.interceptors.request.use(
   }
 );
 
+// token 过期统一处理：清理本地存储并跳转登录页
+function handleTokenExpired() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('username');
+  localStorage.removeItem('nickname');
+  localStorage.removeItem('userId');
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+  }
+}
+
+// 响应拦截器 - 处理 401 认证失败
+apiClient.interceptors.response.use(
+  (response) => {
+    if (response.data?.code === 401) {
+      handleTokenExpired();
+      return Promise.reject(new Error(response.data?.msg || '认证失败'));
+    }
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      handleTokenExpired();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // 聊天相关类型定义
 export interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -123,6 +151,13 @@ export const streamChatSend = async (
     console.log('📥 响应头 Content-Type:', response.headers.get('content-type'));
     console.log('📥 响应头 Transfer-Encoding:', response.headers.get('transfer-encoding'));
     console.log('📥 响应头 Cache-Control:', response.headers.get('cache-control'));
+
+    // 处理 401 认证失败
+    if (response.status === 401) {
+      handleTokenExpired();
+      onError?.(new Error('认证失败'));
+      return;
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -253,6 +288,13 @@ export const streamChatSendWithFiles = async (
       },
       body: formData,
     });
+
+    // 处理 401 认证失败
+    if (response.status === 401) {
+      handleTokenExpired();
+      onError?.(new Error('认证失败'));
+      return;
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);

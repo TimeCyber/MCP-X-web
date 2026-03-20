@@ -24,6 +24,34 @@ apiClient.interceptors.request.use(
   }
 );
 
+// token 过期统一处理：清理本地存储并跳转登录页
+function handleTokenExpired() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('username');
+  localStorage.removeItem('nickname');
+  localStorage.removeItem('userId');
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+  }
+}
+
+// 响应拦截器 - 处理 401 认证失败
+apiClient.interceptors.response.use(
+  (response) => {
+    if (response.data?.code === 401) {
+      handleTokenExpired();
+      return Promise.reject(new Error(response.data?.msg || '认证失败'));
+    }
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      handleTokenExpired();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // 分类接口类型定义
 export interface ShowcaseCategory {
   id: number;
