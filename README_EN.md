@@ -67,6 +67,7 @@ MCP-X is an **enterprise-grade AI agent development platform** that integrates A
 ## 🎨 Latest Updates
 
 ### v0.1.3 App Builder & Preview
+- **Nano Banana Pro 4K**: Image generation adds **Nano Banana Pro 4K** for high-resolution output
 - **HTTPS preview via reverse proxy**: Parse SSE message `预览路径: /vite/{port}` and open preview at `current origin + path` (same protocol as the page) to avoid mixed content; persisted key `dev_path_{appId}`
 - **Cross-origin dev iframe editing**: For React/Vite dev previews, inject editor via fetch + `srcdoc`; URL constructor shim for `about:srcdoc` to reduce react-router-dom errors
 - **New app page**: Shows recent apps list at the bottom with links to the builder
@@ -110,7 +111,7 @@ AI frontend building experience similar to Bolt/Loveable:
 - **Code Download**: Complete code package download
 
 ### 4. AI Image Editor
-Supports mainstream Chinese models: Qwen, Seed, etc., and international models: Nano Banana.
+Supports mainstream Chinese models: Qwen, Seed, etc., and international models: Nano Banana, **Nano Banana Pro 4K**.
 - **Text-to-Image**: Generate images from text descriptions
 - **Image-to-Image**: Generate new images based on reference images
 - **Local Editing**: Mask support for local area editing
