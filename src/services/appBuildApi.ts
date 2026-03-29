@@ -82,6 +82,8 @@ export interface AppInfo {
   createTime: string;
   updateTime: string;
   deployedTime?: string;
+  // 后端 dev 模式下返回的预览地址（如 http://localhost:4100/#/）
+  previewUrl?: string;
 }
 
 export interface ChatMessage {
@@ -463,6 +465,20 @@ export const updateApp = async (data: {
     priority: data.priority,
   });
   return response.data;
+};
+
+// 将后端返回的 dev server URL 中的 localhost 替换为实际服务器域名
+// 例如：http://localhost:4100/#/  →  http://www.mcp-x.com:4100/#/
+export const resolveDevServerUrl = (devUrl: string): string => {
+  if (!devUrl) return devUrl;
+  try {
+    const apiHost = new URL(API_BASE_URL).hostname;
+    // 开发环境下 API 也在 localhost，不需要替换
+    if (!apiHost || apiHost === 'localhost' || apiHost === '127.0.0.1') return devUrl;
+    return devUrl.replace(/localhost|127\.0\.0\.1/g, apiHost);
+  } catch {
+    return devUrl;
+  }
 };
 
 // 获取静态资源预览URL

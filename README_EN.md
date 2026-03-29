@@ -66,6 +66,12 @@ MCP-X is an **enterprise-grade AI agent development platform** that integrates A
 
 ## 🎨 Latest Updates
 
+### v0.1.3 App Builder & Preview
+- **HTTPS preview via reverse proxy**: Parse SSE message `预览路径: /vite/{port}` and open preview at `current origin + path` (same protocol as the page) to avoid mixed content; persisted key `dev_path_{appId}`
+- **Cross-origin dev iframe editing**: For React/Vite dev previews, inject editor via fetch + `srcdoc`; URL constructor shim for `about:srcdoc` to reduce react-router-dom errors
+- **New app page**: Shows recent apps list at the bottom with links to the builder
+- **Builder UX**: Chat input max 8000 chars; loading older history keeps scroll position; source tab supports inline edit and send to AI
+
 ### v0.1.1 New Features
 - **🎬 Graphics Workbench Reference Video Generation**: Support @ symbol to reference images on canvas for video generation, currently only supports Alibaba Qwen model
 - **✨ Comprehensive UI Optimization**: Enhanced user experience with optimized visual design and interaction flow
@@ -98,8 +104,8 @@ Supports mainstream Chinese models: Deepseek, Qwen, KIMI, etc., and internationa
 AI frontend building experience similar to Bolt/Loveable:
 - **Conversational Development**: Describe requirements in natural language, AI generates code in real-time
 - **Multi-Framework Support**: HTML, React, Vue, static websites
-- **Real-Time Preview**: Generated code previewed instantly
-- **Visual Editing**: Click page elements for precise modifications
+- **Real-Time Preview**: Instant preview; production can proxy dev server at `/vite/{port}` so the UI builds same-origin HTTPS URLs from SSE “preview path”
+- **Visual Editing**: Click elements to refine (with cross-origin dev iframe injection when needed)
 - **One-Click Deployment**: Cloud deployment support
 - **Code Download**: Complete code package download
 

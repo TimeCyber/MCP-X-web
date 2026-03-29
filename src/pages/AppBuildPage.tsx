@@ -90,8 +90,10 @@ export const AppBuildPage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  // 网页预览自动刷新计数（每三分钟+1，驱动预览URL变更从而刷新）
+  // 网页预览自动刷新计数（每十分钟+1，驱动预览URL变更从而刷新）
   const [previewRefreshTick, setPreviewRefreshTick] = useState(0);
+  // 后端 dev 模式的 Nginx 代理路径（如 /vite/4101），持久化到 localStorage
+  const [devServerPath, setDevServerPath] = useState<string>('');
   
   // 部署状态
   const [deploying, setDeploying] = useState(false);
@@ -121,6 +123,10 @@ export const AppBuildPage: React.FC = () => {
   
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // 标记是否正在"加载更多历史"，是则恢复滚动位置而非滚到底
+  const isLoadingMoreRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
   const userId = localStorage.getItem('userId');
   const token = localStorage.getItem('token');
   // 代码折叠状态持久存储（会话级）
@@ -153,21 +159,36 @@ export const AppBuildPage: React.FC = () => {
     }
   }, [token, userId, navigate, location]);
 
-  // 每三分钟自动刷新右侧网页预览（仅在已有预览URL时生效）
+  // 从 localStorage 恢复 dev server 代理路径（页面刷新后保持 dev 模式预览）
+  useEffect(() => {
+    if (!appId) return;
+    const saved = localStorage.getItem(`dev_path_${appId}`);
+    if (saved) {
+      console.log('🔁 从 localStorage 恢复 dev server 路径:', saved);
+      setDevServerPath(saved);
+    }
+  }, [appId]);
+
+  // 每十分钟自动刷新右侧网页预览（仅在已有预览URL时生效）
   useEffect(() => {
     if (!previewUrl) return;
     const timer = window.setInterval(() => {
       setPreviewRefreshTick((n) => n + 1);
-    }, 180000); // 3分钟
+    }, 600000); // 10分钟
     return () => window.clearInterval(timer);
   }, [previewUrl]);
 
   // 传递给 CodePreview 的实际URL，带上变化参数触发 iframe 刷新
+  // 优先使用后端 dev server 代理路径（自动使用当前协议，兼容 HTTPS）
   const effectivePreviewUrl = useMemo(() => {
+    if (devServerPath) {
+      const base = `${window.location.origin}${devServerPath}/`;
+      return `${base}?__r=${previewRefreshTick}`;
+    }
     if (!previewUrl) return '';
     const sep = previewUrl.includes('?') ? '&' : '?';
     return `${previewUrl}${sep}__r=${previewRefreshTick}`;
-  }, [previewUrl, previewRefreshTick]);
+  }, [devServerPath, previewUrl, previewRefreshTick]);
 
   // 生成期间随机选择一个小游戏（在 isGenerating 变为 true 时决定，并在本次期间保持稳定）
   const activeMiniGame = useMemo<null | 'dino' | 'tank'>(() => {
@@ -181,7 +202,17 @@ export const AppBuildPage: React.FC = () => {
   };
 
   useEffect(() => {
-    scrollToBottom();
+    if (isLoadingMoreRef.current) {
+      // 加载更多历史：恢复到加载前的滚动位置，不滚到底
+      const container = messagesContainerRef.current;
+      if (container) {
+        const added = container.scrollHeight - prevScrollHeightRef.current;
+        container.scrollTop = added > 0 ? added : 0;
+      }
+      isLoadingMoreRef.current = false;
+    } else {
+      scrollToBottom();
+    }
   }, [messages]);
 
   // 构造多轮对话上下文（最近N条）
@@ -264,7 +295,9 @@ export const AppBuildPage: React.FC = () => {
             .sort((a: ChatMessageType, b: ChatMessageType) => new Date(a.createTime || 0).getTime() - new Date(b.createTime || 0).getTime());
             
           if (isLoadMore) {
-            // 加载更早的历史：追加到现有消息顶部
+            // 加载更早的历史：追加到现有消息顶部，同时保存当前滚动高度以便恢复位置
+            isLoadingMoreRef.current = true;
+            prevScrollHeightRef.current = messagesContainerRef.current?.scrollHeight ?? 0;
             setMessages(prev => [...historyMessages, ...prev]);
           } else {
             // 首次加载：直接按时间正序展示（老->新）
@@ -291,13 +324,19 @@ export const AppBuildPage: React.FC = () => {
     }
   };
 
-  // 更新预览
+  // 更新预览（dev 代理路径优先，已有路径时不用静态地址覆盖）
   const updatePreview = (app?: AppInfo) => {
     const currentApp = app || appInfo;
-    console.log('updatePreview 被调用', { currentApp, appId });
+    // 已有 dev server 代理路径，effectivePreviewUrl 会自动使用，无需再设静态地址
+    const savedPath = appId ? (localStorage.getItem(`dev_path_${appId}`) || '') : '';
+    if (savedPath) {
+      console.log('已有 dev server 路径，跳过静态地址设置:', savedPath);
+      if (!devServerPath) setDevServerPath(savedPath);
+      return;
+    }
     if (currentApp && appId) {
       const newPreviewUrl = getStaticPreviewUrl(currentApp.codeGenType, appId);
-      console.log('生成预览URL:', newPreviewUrl);
+      console.log('生成静态预览URL:', newPreviewUrl);
       setPreviewUrl(newPreviewUrl);
     }
   };
@@ -446,12 +485,22 @@ export const AppBuildPage: React.FC = () => {
               deltaContent = chunk.content;
             } else {
               console.log('⚠️ 未识别的数据格式:', chunk);
-              // 尝试直接转换为字符串
               deltaContent = JSON.stringify(chunk);
             }
             
             if (deltaContent !== undefined && deltaContent !== null && deltaContent !== '') {
               console.log('✅ 提取到内容:', deltaContent);
+
+              // 检测后端返回的 Nginx 代理路径，如「预览路径: /vite/4101」
+              const pathMatch = deltaContent.match(/预览路径[：:]\s*(\/vite\/\d+)/);
+              if (pathMatch) {
+                const path = pathMatch[1];
+                console.log('🌐 检测到 dev server 代理路径:', path);
+                if (appId) localStorage.setItem(`dev_path_${appId}`, path);
+                setDevServerPath(path);
+                setPreviewRefreshTick((n) => n + 1);
+              }
+
               fullContent += deltaContent;
               setMessages(prev => 
                 prev.map((msg, index) => 
@@ -476,10 +525,9 @@ export const AppBuildPage: React.FC = () => {
           console.log('应用构建流式响应完成');
           setIsGenerating(false);
           
-          // 延迟更新预览
+          // 延迟刷新应用信息（如 previewUrl 字段也在 AppInfo 里时会同步更新）
           setTimeout(() => {
             loadAppInfo();
-            updatePreview();
           }, 1000);
         },
         // 传递上下文
@@ -555,6 +603,17 @@ export const AppBuildPage: React.FC = () => {
     }
   };
 
+
+  // 用户直接编辑代码后，将修改内容作为 chat 消息发给 AI 应用
+  const handleSaveCode = (filePath: string, content: string) => {
+    const msg = `请将以下文件 \`${filePath}\` 的内容替换为我直接编辑后的版本，保持其他文件不变：\n\n\`\`\`\n${content}\n\`\`\``;
+    setUserInput(msg);
+    // 自动滚动到输入框
+    setTimeout(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>('textarea[maxlength="8000"]');
+      textarea?.focus();
+    }, 100);
+  };
 
   // 切换编辑模式
   const toggleEditMode = () => {
@@ -665,7 +724,7 @@ export const AppBuildPage: React.FC = () => {
         {/* 左侧聊天区域 */}
         <div className="flex flex-col w-2/5 bg-white rounded-lg shadow-sm border border-slate-200">
           {/* 消息区域 */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
             {/* 加载更多历史 */}
             {hasMoreHistory && (
               <div className="text-center mb-4">
@@ -837,7 +896,7 @@ export const AppBuildPage: React.FC = () => {
                 placeholder={getInputPlaceholder()}
                 className="flex-1 px-3 py-2 border border-slate-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
                 rows={3}
-                maxLength={1000}
+                maxLength={8000}
                 disabled={isGenerating || !isOwner}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -873,6 +932,7 @@ export const AppBuildPage: React.FC = () => {
             onClearSelection={clearSelectedElement}
             onElementSelected={handleElementSelected}
             onDownloadCode={handleDownload}
+            onSaveCode={handleSaveCode}
             isOwner={isOwner}
             appId={appId || ''}
             codeGenType={appInfo?.codeGenType}

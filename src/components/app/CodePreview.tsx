@@ -21,6 +21,7 @@ interface CodePreviewProps {
   onClearSelection?: () => void;
   onElementSelected?: (elementInfo: ElementInfo) => void;
   onDownloadCode?: () => void;
+  onSaveCode?: (filePath: string, content: string) => void;
   isOwner?: boolean;
   className?: string;
   appId?: string;
@@ -36,12 +37,14 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   onClearSelection: _onClearSelection,
   onElementSelected,
   onDownloadCode,
+  onSaveCode,
   isOwner = true,
   className = '',
   appId,
   codeGenType,
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isSrcdocInjectedRef = useRef(false); // 防止跨域 srcdoc 注入后重复处理
   const [previewReady, setPreviewReady] = useState(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'code'>('preview');
   const [codeText, setCodeText] = useState('');
@@ -49,6 +52,8 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   const [codeError, setCodeError] = useState('');
   const [selectedPath, setSelectedPath] = useState<string>('');
   const [selectedLines, setSelectedLines] = useState<{ start: number; end: number } | null>(null);
+  const [isCodeEditing, setIsCodeEditing] = useState(false);
+  const [editingContent, setEditingContent] = useState('');
 
   type FileNode = {
     name: string;
@@ -67,177 +72,175 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
     }
   };
 
-  // iframe加载完成处理（生产避免内联脚本，改为注入外部脚本）
-  const handleIframeLoad = () => {
-    setPreviewReady(true);
-    if (iframeRef.current && isOwner) {
-      try {
-        const iframeDocument = iframeRef.current.contentDocument;
-        if (iframeDocument) {
-          const script = iframeDocument.createElement('script');
-          script.src = '/iframe-editor.js';
-          script.crossOrigin = 'anonymous';
-          script.onload = () => {
-            try {
-              iframeRef.current?.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
-              if (!selectedElementInfo) {
-                iframeRef.current?.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
-              }
-            } catch {}
-          };
-          script.onerror = () => {
-            // 回退：若外部脚本加载失败，尝试内联方案
-            try {
-              const fallback = iframeDocument.createElement('script');
-              fallback.textContent = `
-            (function() {
-              let isEditModeActive = false;
-              let selectedElement = null;
-              let overlay = null;
-              let mouseMoveHandler = null;
-
-              // 创建选择覆盖层
-              function createOverlay() {
-                overlay = document.createElement('div');
-                overlay.style.cssText = \`
-                  position: fixed;
-                  border: 2px solid #1890ff;
-                  background: rgba(24, 144, 255, 0.1);
-                  pointer-events: none;
-                  z-index: 10000;
-                  transition: all 0.2s ease;
-                \`;
-                document.body.appendChild(overlay);
-              }
-
-              // CSS 标识符转义，兼容 Tailwind 类名中的冒号等特殊字符
-              function cssEscapeIdent(ident){
-                try {
-                  if (window.CSS && CSS.escape) return CSS.escape(ident);
-                } catch(e) {}
-                return String(ident).replace(/([!"#$%&'()*+,./:;<=>?@\[\\\]^\`{|}~])/g, '\\$1');
-              }
-
-              // 更新覆盖层位置
-              function updateOverlay(element) {
-                if (!overlay || !element) return;
-                const rect = element.getBoundingClientRect();
-                overlay.style.left = rect.left + 'px';
-                overlay.style.top = rect.top + 'px';
-                overlay.style.width = rect.width + 'px';
-                overlay.style.height = rect.height + 'px';
-                overlay.style.display = 'block';
-              }
-
-              // 生成CSS选择器
-              function generateSelector(element) {
-                if (element.id) {
-                  return '#' + cssEscapeIdent(element.id);
-                }
-                
-                let selector = element.tagName.toLowerCase();
-                var classTokens = [];
-                if (element.classList && element.classList.length) {
-                  classTokens = Array.from(element.classList);
-                } else if (element.className) {
-                  classTokens = String(element.className).split(' ');
-                }
-                classTokens = classTokens.map(function(c){return c && c.trim();}).filter(Boolean);
-                if (classTokens.length > 0) {
-                  selector += '.' + classTokens.map(cssEscapeIdent).join('.');
-                }
-                
-                // 如果选择器不够唯一，添加父级信息
-                var elements = document.querySelectorAll(selector);
-                if (elements.length > 1) {
-                  var parent = element.parentElement;
-                  if (parent && parent !== document.body) {
-                    var parentSelector = generateSelector(parent);
-                    selector = parentSelector + ' > ' + selector;
-                  }
-                }
-                
-                return selector;
-              }
-
-              // 处理元素选择
-              function handleElementSelect(event) {
-                if (!isEditModeActive) return;
-                
-                event.preventDefault();
-                event.stopPropagation();
-                
-                const element = event.target;
-                if (!element || element === document.body || element === document.documentElement) return;
-                
-                selectedElement = element;
-                updateOverlay(element);
-                
-                // 发送选择信息到父窗口
-                const elementInfo = {
-                  tagName: element.tagName,
-                  id: element.id || undefined,
-                  className: element.className || undefined,
-                  textContent: element.textContent ? element.textContent.substring(0, 100) : undefined,
-                  selector: generateSelector(element),
-                  pagePath: window.location.pathname,
-                };
-                
-                window.parent.postMessage({
-                  type: 'elementSelected',
-                  data: elementInfo
-                }, '*');
-              }
-
-              // 监听来自父窗口的消息
-              window.addEventListener('message', function(event) {
-                if (event.data.type === 'toggleEditMode') {
-                  isEditModeActive = event.data.enabled;
-                  
-                  if (isEditModeActive) {
-                    if (!overlay) createOverlay();
-                    document.addEventListener('click', handleElementSelect, true);
-                    mouseMoveHandler = function(e) {
-                      if (!isEditModeActive) return;
-                      const t = e.target;
-                      if (t && t !== document.body && t !== document.documentElement) {
-                        updateOverlay(t);
-                      }
-                    };
-                    document.addEventListener('mousemove', mouseMoveHandler, true);
-                    document.body.style.cursor = 'crosshair';
-                  } else {
-                    document.removeEventListener('click', handleElementSelect, true);
-                    if (mouseMoveHandler) {
-                      document.removeEventListener('mousemove', mouseMoveHandler, true);
-                      mouseMoveHandler = null;
-                    }
-                    if (overlay) {
-                      overlay.remove();
-                      overlay = null;
-                    }
-                    selectedElement = null;
-                    document.body.style.cursor = '';
-                  }
-                } else if (event.data.type === 'clearSelection') {
-                  selectedElement = null;
-                  if (overlay) {
-                    overlay.style.display = 'none';
-                  }
-                }
-              });
-            })();
-              `;
-              iframeDocument.head.appendChild(fallback);
-            } catch (e) {
-              console.warn('无法注入编辑脚本(回退):', e);
-            }
-          };
-          iframeDocument.head.appendChild(script);
-        }
-      } catch (error) {
-        console.warn('无法注入编辑脚本:', error);
+  // 编辑器脚本内容（内联，同源/跨域均可用）
+  const EDITOR_SCRIPT_CONTENT = `(function() {
+  if (window.__mcpxEditorInjected) return;
+  window.__mcpxEditorInjected = true;
+  var isEditModeActive = false;
+  var overlay = null;
+  var mouseMoveHandler = null;
+  function createOverlay() {
+    overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;border:2px solid #1890ff;background:rgba(24,144,255,0.1);pointer-events:none;z-index:10000;transition:all 0.1s ease;';
+    document.body.appendChild(overlay);
+  }
+  function updateOverlay(el) {
+    if (!overlay || !el) return;
+    var r = el.getBoundingClientRect();
+    overlay.style.left = r.left + 'px';
+    overlay.style.top = r.top + 'px';
+    overlay.style.width = r.width + 'px';
+    overlay.style.height = r.height + 'px';
+    overlay.style.display = 'block';
+  }
+  function cssEscape(s) {
+    try { if (window.CSS && CSS.escape) return CSS.escape(s); } catch(e) {}
+      return String(s).replace(/([!"#$%&'()*+,./:;<=>?@\\[\\\\\\]^\`{|}~])/g,'\\\\$1');
+  }
+  function generateSelector(el) {
+    if (el.id) return '#' + cssEscape(el.id);
+    var sel = el.tagName.toLowerCase();
+    var tokens = el.classList && el.classList.length ? Array.from(el.classList) : (el.className ? String(el.className).split(' ') : []);
+    tokens = tokens.map(function(c){return c && c.trim();}).filter(Boolean);
+    if (tokens.length) sel += '.' + tokens.map(cssEscape).join('.');
+    if (document.querySelectorAll(sel).length > 1 && el.parentElement && el.parentElement !== document.body) {
+      sel = generateSelector(el.parentElement) + ' > ' + sel;
+    }
+    return sel;
+  }
+  function handleClick(e) {
+    if (!isEditModeActive) return;
+    e.preventDefault(); e.stopPropagation();
+    var el = e.target;
+    if (!el || el === document.body || el === document.documentElement) return;
+    updateOverlay(el);
+    window.parent.postMessage({ type: 'elementSelected', data: {
+      tagName: el.tagName,
+      id: el.id || undefined,
+      className: (typeof el.className === 'string' ? el.className : '') || undefined,
+      textContent: el.textContent ? el.textContent.substring(0,100) : undefined,
+      selector: generateSelector(el),
+      pagePath: window.location.pathname
+    }}, '*');
+  }
+  window.addEventListener('message', function(e) {
+    if (!e.data) return;
+    if (e.data.type === 'toggleEditMode') {
+      isEditModeActive = e.data.enabled;
+      if (isEditModeActive) {
+        if (!overlay) createOverlay();
+        document.addEventListener('click', handleClick, true);
+        mouseMoveHandler = function(ev) {
+          if (!isEditModeActive) return;
+          var t = ev.target;
+          if (t && t !== document.body && t !== document.documentElement) updateOverlay(t);
+        };
+        document.addEventListener('mousemove', mouseMoveHandler, true);
+        document.body.style.cursor = 'crosshair';
+      } else {
+        document.removeEventListener('click', handleClick, true);
+        if (mouseMoveHandler) { document.removeEventListener('mousemove', mouseMoveHandler, true); mouseMoveHandler = null; }
+        if (overlay) { overlay.remove(); overlay = null; }
+        document.body.style.cursor = '';
       }
+    } else if (e.data.type === 'clearSelection') {
+      if (overlay) overlay.style.display = 'none';
+    }
+  });
+})();`;
+
+  // 向 iframe 注入编辑器脚本（同源：直接操作 DOM；跨域：fetch+srcdoc）
+  const handleIframeLoad = async () => {
+    setPreviewReady(true);
+    if (!iframeRef.current || !isOwner) return;
+
+    // 1. 尝试同源注入
+    let iframeDoc: Document | null = null;
+    try { iframeDoc = iframeRef.current.contentDocument; } catch (_) { /* 跨域，忽略 */ }
+
+    if (iframeDoc) {
+      // 同源：直接注入脚本
+      if (!iframeDoc.getElementById('__mcpx_editor__')) {
+        const s = iframeDoc.createElement('script');
+        s.id = '__mcpx_editor__';
+        s.textContent = EDITOR_SCRIPT_CONTENT;
+        (iframeDoc.head || iframeDoc.documentElement).appendChild(s);
+      }
+      setTimeout(() => {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
+        if (!selectedElementInfo) {
+          iframeRef.current?.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
+        }
+      }, 100);
+      return;
+    }
+
+    // 2. 跨域（React dev server 不同端口）：fetch HTML → 注入脚本 → 作为 srcdoc 写回
+    if (isSrcdocInjectedRef.current) {
+      // srcdoc 已写入，这次是 srcdoc 加载完成，发送初始状态即可
+      setTimeout(() => {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
+        if (!selectedElementInfo) {
+          iframeRef.current?.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
+        }
+      }, 200);
+      return;
+    }
+
+    const src = iframeRef.current.getAttribute('src');
+    if (!src || src === 'about:blank') return;
+
+    try {
+      console.log('🔧 跨域 iframe，尝试 fetch+srcdoc 注入编辑器脚本:', src);
+      const res = await fetch(src, { mode: 'cors', credentials: 'omit' });
+      if (!res.ok) throw new Error(`fetch ${res.status}`);
+      let html = await res.text();
+
+      // 去掉 hash，构造 base URL
+      const baseUrl = src.replace(/#.*$/, '');
+
+      // srcdoc iframe 的 window.location.href 是 'about:srcdoc'，
+      // react-router-dom 调用 new URL(path, 'about:srcdoc') 会崩溃。
+      // 解决：在所有模块加载前，先注入 URL 构造器补丁，将 about: 系列 base 替换为真实 dev server 地址。
+      const urlPatch = `<script>
+(function(){
+  var _base="${baseUrl}";
+  try{
+    var _O=window.URL;
+    var _P=function(u,b){
+      if(!b||(typeof b==="string"&&b.startsWith("about:"))){b=_base;}
+      return new _O(u,b);
+    };
+    _P.prototype=_O.prototype;
+    _P.createObjectURL=_O.createObjectURL.bind(_O);
+    _P.revokeObjectURL=_O.revokeObjectURL.bind(_O);
+    if(_O.canParse)_P.canParse=_O.canParse.bind(_O);
+    window.URL=_P;
+  }catch(e){}
+  try{
+    var _ph=history.pushState.bind(history);
+    var _rh=history.replaceState.bind(history);
+    history.pushState=function(s,t,u){try{_ph(s,t,u);}catch(e){}};
+    history.replaceState=function(s,t,u){try{_rh(s,t,u);}catch(e){}};
+  }catch(e){}
+})();
+<\/script>`;
+
+      const injection = `${urlPatch}<base href="${baseUrl}"><script id="__mcpx_editor__">${EDITOR_SCRIPT_CONTENT}<\/script>`;
+
+      if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head>${injection}`);
+      } else if (html.includes('<html')) {
+        html = html.replace(/(<html[^>]*>)/i, `$1<head>${injection}</head>`);
+      } else {
+        html = `<head>${injection}</head>` + html;
+      }
+
+      isSrcdocInjectedRef.current = true;
+      iframeRef.current.srcdoc = html;
+      console.log('✅ 跨域编辑器脚本注入成功（srcdoc 模式）');
+    } catch (err) {
+      console.warn('⚠️ 跨域 iframe 编辑器注入失败（CORS 限制）:', err);
     }
   };
 
@@ -279,6 +282,11 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       }
     }
   }, [selectedElementInfo, previewReady]);
+
+  // previewUrl 变化时重置 srcdoc 注入标记
+  useEffect(() => {
+    isSrcdocInjectedRef.current = false;
+  }, [previewUrl]);
 
   // 当切换到代码 Tab 时，拉取 index.html 源码与目录结构
   useEffect(() => {
@@ -354,6 +362,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   // 点击文件，加载并显示
   const handleSelectFile = async (path: string) => {
     if (!previewUrl) return;
+    setIsCodeEditing(false);
     setSelectedPath(path);
     // 确保父级目录始终保持展开（如 /src、/src/pages等）
     try {
@@ -596,7 +605,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
         ) : (
           <div className="w-full h-full flex bg-slate-50">
             {/* 目录侧栏 */}
-            <div className="w-64 border-r border-slate-200 bg-white overflow-auto p-2">
+            <div className="w-56 shrink-0 border-r border-slate-200 bg-white overflow-auto p-2">
               {!fileTree ? (
                 <div className="text-sm text-slate-500 p-2">暂无目录</div>
               ) : (
@@ -605,34 +614,78 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                 </div>
               )}
             </div>
-            {/* 文件内容（自适应：与网页预览同宽 = 剩余空间） */}
-            <div className="flex-1 min-w-0 h-full overflow-auto p-0">
-              {!previewUrl ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500">
-                  <div className="text-4xl mb-4">📄</div>
-                  <p className="text-sm">暂无可展示的源码</p>
-                </div>
-              ) : loadingCode ? (
-                <div className="flex items-center justify-center h-full text-slate-500">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mr-2"></div>
-                  <span className="text-sm">加载中…</span>
-                </div>
-              ) : codeError ? (
-                <div className="text-center text-sm text-red-600">{codeError}</div>
-              ) : (
-                <div className="text-[12px] leading-5 font-mono bg-white rounded-md border border-slate-200 h-full flex flex-col select-none">
-                  {/* 顶部提示与状态 */}
-                  {isEditMode && (
-                    <div className="px-3 py-1 text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
-                      单击/Shift+单击多行，可选中代码
-                    </div>
+            {/* 文件内容区 */}
+            <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+              {/* 代码区工具栏 */}
+              {!loadingCode && !codeError && codeText && isOwner && (
+                <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0">
+                  {isCodeEditing ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          const filePath = selectedPath || 'index.html';
+                          onSaveCode?.(filePath, editingContent);
+                          setIsCodeEditing(false);
+                        }}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      >
+                        发送修改给 AI
+                      </button>
+                      <button
+                        onClick={() => { setIsCodeEditing(false); setEditingContent(codeText); }}
+                        className="px-3 py-1 text-xs text-slate-600 border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+                      >
+                        取消
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => { setIsCodeEditing(true); setEditingContent(codeText); }}
+                      className="px-3 py-1 text-xs text-slate-600 border border-slate-300 rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
+                    >
+                      <Edit3 size={12} />
+                      编辑代码
+                    </button>
                   )}
-                  {isEditMode && selectedLines && (
-                    <div className="px-3 py-1 text-xs text-blue-700 bg-blue-50 border-b border-slate-200">
-                      已选中 {selectedPath || 'index.html'} 第 {selectedLines.start}-{selectedLines.end} 行
-                    </div>
-                  )}
-                  <div className="flex-1 overflow-auto">
+                </div>
+              )}
+
+              <div className="flex-1 overflow-auto">
+                {!previewUrl ? (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                    <div className="text-4xl mb-4">📄</div>
+                    <p className="text-sm">暂无可展示的源码</p>
+                  </div>
+                ) : loadingCode ? (
+                  <div className="flex items-center justify-center h-full text-slate-500">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mr-2"></div>
+                    <span className="text-sm">加载中…</span>
+                  </div>
+                ) : codeError ? (
+                  <div className="text-center text-sm text-red-600 p-4">{codeError}</div>
+                ) : isCodeEditing ? (
+                  /* 编辑模式：可编辑 textarea */
+                  <textarea
+                    className="w-full h-full p-3 font-mono text-[12px] leading-5 text-slate-800 bg-white border-none outline-none resize-none"
+                    value={editingContent}
+                    onChange={(e) => setEditingContent(e.target.value)}
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                  />
+                ) : (
+                  /* 只读模式：行号 + 代码 */
+                  <div className="text-[12px] leading-5 font-mono bg-white h-full select-none">
+                    {isEditMode && (
+                      <div className="px-3 py-1 text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
+                        单击/Shift+单击多行，可选中代码发给 AI
+                      </div>
+                    )}
+                    {isEditMode && selectedLines && (
+                      <div className="px-3 py-1 text-xs text-blue-700 bg-blue-50 border-b border-slate-200">
+                        已选中 {selectedPath || 'index.html'} 第 {selectedLines.start}-{selectedLines.end} 行
+                      </div>
+                    )}
                     {(codeText.split(/\r?\n/)).map((line, i) => {
                       const lineNo = i + 1;
                       const inSel = selectedLines && lineNo >= Math.min(selectedLines.start, selectedLines.end) && lineNo <= Math.max(selectedLines.start, selectedLines.end);
@@ -645,7 +698,6 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                             const withShift = (e as React.MouseEvent<HTMLDivElement>).shiftKey;
                             setSelectedLines((prev) => {
                               const next = !prev || !withShift ? { start: lineNo, end: lineNo } : { start: prev.start, end: lineNo };
-                              // 向父组件上报选择信息
                               try {
                                 const start = Math.min(next.start, next.end);
                                 const end = Math.max(next.start, next.end);
@@ -666,9 +718,9 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                         </div>
                       );
                     })}
-                </div>
+                  </div>
+                )}
               </div>
-            )}
             </div>
           </div>
         )}

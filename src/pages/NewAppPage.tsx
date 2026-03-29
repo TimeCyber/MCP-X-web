@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { createApp } from '../services/appBuildApi';
+import { createApp, getMyApps, formatCodeGenType, type AppInfo } from '../services/appBuildApi';
 import { toast } from '../utils/toast';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Code, Calendar } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 interface CreateAppForm {
@@ -38,7 +38,23 @@ export const NewAppPage: React.FC = () => {
     initPrompt: '',
   });
   const [creating, setCreating] = useState(false);
+  const [myApps, setMyApps] = useState<AppInfo[]>([]);
+  const [myAppsLoading, setMyAppsLoading] = useState(false);
   const userId = localStorage.getItem('userId');
+
+  const formatTime = (timeString: string) => {
+    try {
+      return new Date(timeString).toLocaleString(currentLanguage === 'zh' ? 'zh-CN' : 'en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return timeString;
+    }
+  };
 
   // 检查登录状态
   useEffect(() => {
@@ -46,6 +62,33 @@ export const NewAppPage: React.FC = () => {
       navigate('/login', { state: { from: location } });
     }
   }, [userId, navigate, location]);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      setMyAppsLoading(true);
+      try {
+        const response = await getMyApps({
+          pageNum: 1,
+          pageSize: 12,
+          sortField: 'createTime',
+          sortOrder: 'desc',
+          isDelete: 0,
+        });
+        if (!cancelled && response.code === 200) {
+          setMyApps(response.rows || []);
+        }
+      } catch (e) {
+        console.error('加载应用列表失败:', e);
+      } finally {
+        if (!cancelled) setMyAppsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // 创建应用执行逻辑（提交和回车复用）
   const handleCreate = async () => {
@@ -139,7 +182,7 @@ export const NewAppPage: React.FC = () => {
               placeholder={currentLanguage === 'zh' ? '一句话生成网站：例如 创建一个个人作品集网站，包含首页、项目、关于我、联系方式，深色科技风，支持移动端。' : 'One sentence to build: e.g., Create a personal portfolio site with Home, Projects, About, Contact; dark tech style; responsive.'}
               className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none shadow-sm"
               rows={5}
-                  maxLength={1000}
+                  maxLength={8000}
                   required
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -177,6 +220,72 @@ export const NewAppPage: React.FC = () => {
 
           {/* 底部操作已取消取消按钮 */}
         </form>
+
+        <section className="mt-12 pt-10 border-t border-slate-200/80">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h3 className="text-lg font-semibold text-slate-800">
+              {currentLanguage === 'zh' ? '我的应用' : 'My apps'}
+            </h3>
+            <button
+              type="button"
+              onClick={() => navigate('/my-apps')}
+              className="text-sm text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              {currentLanguage === 'zh' ? '查看全部' : 'View all'}
+            </button>
+          </div>
+
+          {myAppsLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+            </div>
+          ) : myApps.length === 0 ? (
+            <p className="text-sm text-slate-600 py-6 text-center">
+              {currentLanguage === 'zh' ? '暂无应用，创建后将显示在这里' : 'No apps yet. They will appear here after you create one.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {myApps.map((app) => (
+                <button
+                  key={app.id}
+                  type="button"
+                  onClick={() => navigate(`/app/build/${app.id}`)}
+                  className="text-left rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden hover:shadow-md hover:border-blue-200 transition-all"
+                >
+                  <div className="h-28 bg-gradient-to-br from-blue-500 to-indigo-600 relative">
+                    {app.cover ? (
+                      <img
+                        src={app.cover}
+                        alt={app.appName}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <Code className="h-10 w-10 text-white opacity-80" />
+                      </div>
+                    )}
+                    <span className="absolute bottom-2 left-2 px-2 py-0.5 text-xs bg-white/20 text-white rounded-full backdrop-blur-sm">
+                      {formatCodeGenType(app.codeGenType)}
+                    </span>
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium text-slate-800 line-clamp-1">{app.appName}</div>
+                    {app.initPrompt ? (
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">{app.initPrompt}</p>
+                    ) : null}
+                    <div className="flex items-center gap-1 mt-2 text-xs text-slate-400">
+                      <Calendar className="h-3.5 w-3.5 shrink-0" />
+                      <span>{formatTime(app.createTime)}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
