@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import 'github-markdown-css/github-markdown-light.css';
+import config from '../config';
 import { 
   getAppInfo, 
   chatToGenCode, 
@@ -92,8 +93,12 @@ export const AppBuildPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   // 网页预览自动刷新计数（每十分钟+1，驱动预览URL变更从而刷新）
   const [previewRefreshTick, setPreviewRefreshTick] = useState(0);
-  // 后端 dev 模式的 Nginx 代理路径（如 /vite/4101），持久化到 localStorage
+  // 后端 dev 模式的代理路径（如 /app/webgen/dev-proxy/xxx/），持久化到 localStorage
   const [devServerPath, setDevServerPath] = useState<string>('');
+  // 后端 dev 模式的端口号（本地开发直连使用，生产走 Nginx 不需要）
+  const [devServerPort, setDevServerPort] = useState<string>('');
+  // dev server 启动错误日志（非空时展示报错提示卡片）
+  const [devErrorLogs, setDevErrorLogs] = useState<string>('');
   
   // 部署状态
   const [deploying, setDeploying] = useState(false);
@@ -159,13 +164,18 @@ export const AppBuildPage: React.FC = () => {
     }
   }, [token, userId, navigate, location]);
 
-  // 从 localStorage 恢复 dev server 代理路径（页面刷新后保持 dev 模式预览）
+  // 从 localStorage 恢复 dev server 代理路径和端口（页面刷新后保持 dev 模式预览）
   useEffect(() => {
     if (!appId) return;
-    const saved = localStorage.getItem(`dev_path_${appId}`);
-    if (saved) {
-      console.log('🔁 从 localStorage 恢复 dev server 路径:', saved);
-      setDevServerPath(saved);
+    const savedPath = localStorage.getItem(`dev_path_${appId}`);
+    if (savedPath) {
+      console.log('🔁 从 localStorage 恢复 dev server 路径:', savedPath);
+      setDevServerPath(savedPath);
+    }
+    const savedPort = localStorage.getItem(`dev_port_${appId}`);
+    if (savedPort) {
+      console.log('🔁 从 localStorage 恢复 dev server 端口:', savedPort);
+      setDevServerPort(savedPort);
     }
   }, [appId]);
 
@@ -179,16 +189,29 @@ export const AppBuildPage: React.FC = () => {
   }, [previewUrl]);
 
   // 传递给 CodePreview 的实际URL，带上变化参数触发 iframe 刷新
-  // 优先使用后端 dev server 代理路径（自动使用当前协议，兼容 HTTPS）
+  // 优先使用后端 dev server 代理路径构造预览地址，携带 token 鉴权
   const effectivePreviewUrl = useMemo(() => {
     if (devServerPath) {
-      const base = `${window.location.origin}${devServerPath}/`;
+      const path = devServerPath.startsWith('/') ? devServerPath : `/${devServerPath}`;
+      const normalizedPath = path.endsWith('/') ? path : `${path}/`;
+      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      let base: string;
+      if (isLocal && devServerPort) {
+        // 本地开发：直接用 SSE 返回的端口直连后端
+        // http://localhost:4105/app/webgen/dev-proxy/xxx/
+        base = `http://localhost:${devServerPort}${normalizedPath}`;
+      } else {
+        // 生产环境：走 Nginx，拼在 apiBaseUrl 后面
+        // https://mcp-x.com/prod-api/app/webgen/dev-proxy/xxx/
+        const apiBase = config.apiBaseUrl.replace(/\/$/, '');
+        base = `${apiBase}${normalizedPath}`;
+      }
       return `${base}?__r=${previewRefreshTick}`;
     }
     if (!previewUrl) return '';
     const sep = previewUrl.includes('?') ? '&' : '?';
     return `${previewUrl}${sep}__r=${previewRefreshTick}`;
-  }, [devServerPath, previewUrl, previewRefreshTick]);
+  }, [devServerPath, devServerPort, previewUrl, previewRefreshTick]);
 
   // 生成期间随机选择一个小游戏（在 isGenerating 变为 true 时决定，并在本次期间保持稳定）
   const activeMiniGame = useMemo<null | 'dino' | 'tank'>(() => {
@@ -332,6 +355,8 @@ export const AppBuildPage: React.FC = () => {
     if (savedPath) {
       console.log('已有 dev server 路径，跳过静态地址设置:', savedPath);
       if (!devServerPath) setDevServerPath(savedPath);
+      const savedPort = appId ? (localStorage.getItem(`dev_port_${appId}`) || '') : '';
+      if (savedPort && !devServerPort) setDevServerPort(savedPort);
       return;
     }
     if (currentApp && appId) {
@@ -491,14 +516,26 @@ export const AppBuildPage: React.FC = () => {
             if (deltaContent !== undefined && deltaContent !== null && deltaContent !== '') {
               console.log('✅ 提取到内容:', deltaContent);
 
-              // 检测后端返回的 Nginx 代理路径，如「预览路径: /vite/4101」
-              const pathMatch = deltaContent.match(/预览路径[：:]\s*(\/vite\/\d+)/);
+              // 检测后端返回的端口号，如「端口: 4105」（本地开发直连使用）
+              const portMatch = deltaContent.match(/端口[：:]\s*(\d+)/);
+              if (portMatch) {
+                const port = portMatch[1];
+                console.log('🌐 检测到 dev server 端口:', port);
+                if (appId) localStorage.setItem(`dev_port_${appId}`, port);
+                setDevServerPort(port);
+              }
+              // 检测后端返回的代理路径，如「预览路径: /app/webgen/dev-proxy/xxx/」
+              const pathMatch = deltaContent.match(/预览路径[：:]\s*(\/\S+)/);
               if (pathMatch) {
-                const path = pathMatch[1];
+                const path = pathMatch[1].trim();
                 console.log('🌐 检测到 dev server 代理路径:', path);
                 if (appId) localStorage.setItem(`dev_path_${appId}`, path);
                 setDevServerPath(path);
                 setPreviewRefreshTick((n) => n + 1);
+                // dev server 启动后延迟检查是否有错误日志
+                if (appId) {
+                  setTimeout(() => checkDevServerErrors(appId), 3000);
+                }
               }
 
               fullContent += deltaContent;
@@ -553,13 +590,18 @@ export const AppBuildPage: React.FC = () => {
     setIsGenerating(false);
   };
 
-  // 部署应用
+  // 部署应用（dev 模式预览走 devServerPath，不一定会写入 previewUrl，不能只用 previewUrl 判定「已生成」）
+  const hasDeployablePreview =
+    !!previewUrl ||
+    !!devServerPath ||
+    !!(appId && localStorage.getItem(`dev_path_${appId}`));
+
   const handleDeploy = async () => {
     if (!appId) {
       toast.error(currentLanguage === 'zh' ? '请先生成网站后再部署' : 'Please generate the app before deploying');
       return;
     }
-    if (!previewUrl) {
+    if (!hasDeployablePreview) {
       toast.error(currentLanguage === 'zh' ? '网站尚未生成，无法部署' : 'Site not generated yet, cannot deploy');
       return;
     }
@@ -605,6 +647,25 @@ export const AppBuildPage: React.FC = () => {
 
 
   // 用户直接编辑代码后，将修改内容作为 chat 消息发给 AI 应用
+  // 查询 dev server 启动错误日志
+  const checkDevServerErrors = async (id: string) => {
+    try {
+      const apiBase = config.apiBaseUrl.replace(/\/$/, '');
+      const res = await fetch(
+        `${apiBase}/app/webgen/chat/dev-server/logs?appId=${id}&errorsOnly=true`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } }
+      );
+      const json = await res.json();
+      if (json.code === 200 && json.data?.hasErrors) {
+        setDevErrorLogs(json.data.logs || '存在未知错误');
+      } else {
+        setDevErrorLogs('');
+      }
+    } catch {
+      // 网络失败时忽略，不干扰正常流程
+    }
+  };
+
   const handleSaveCode = (filePath: string, content: string) => {
     const msg = `请将以下文件 \`${filePath}\` 的内容替换为我直接编辑后的版本，保持其他文件不变：\n\n\`\`\`\n${content}\n\`\`\``;
     setUserInput(msg);
@@ -833,6 +894,39 @@ export const AppBuildPage: React.FC = () => {
             )}
           </div>
                 ))}
+                {/* dev server 错误提示卡片 */}
+                {devErrorLogs && (
+                  <div className="mt-2 p-3 rounded-xl border border-red-200 bg-red-50">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 text-sm font-medium text-red-700">
+                        <span>⚠️</span>
+                        <span>{currentLanguage === 'zh' ? 'Dev Server 启动异常' : 'Dev Server Error Detected'}</span>
+                      </div>
+                      <button
+                        onClick={() => setDevErrorLogs('')}
+                        className="text-red-400 hover:text-red-600 text-xs shrink-0"
+                      >✕</button>
+                    </div>
+                    <pre className="text-xs text-red-600 bg-red-100 rounded p-2 overflow-x-auto max-h-32 whitespace-pre-wrap break-words mb-2">
+                      {devErrorLogs}
+                    </pre>
+                    <button
+                      onClick={() => {
+                        const msg = `Dev server 启动出现以下错误，请帮我分析并修复：\n\`\`\`\n${devErrorLogs}\n\`\`\``;
+                        setUserInput(msg);
+                        setDevErrorLogs('');
+                        setTimeout(() => {
+                          const textarea = document.querySelector<HTMLTextAreaElement>('textarea[maxlength="8000"]');
+                          textarea?.focus();
+                        }, 100);
+                      }}
+                      disabled={isGenerating || !isOwner}
+                      className="w-full py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {currentLanguage === 'zh' ? '📤 将错误报告给 AI 并修复' : '📤 Report to AI & Fix'}
+                    </button>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             )}

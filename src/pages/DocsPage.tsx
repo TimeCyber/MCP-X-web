@@ -201,7 +201,7 @@ const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLa
         </div>
 
         <div className="space-y-3">
-          <p className="text-gray-300 font-medium">{zh ? '请求体（三种模式）' : 'Request Body (3 modes)'}</p>
+          <p className="text-gray-300 font-medium">{zh ? '请求体（基础模式）' : 'Request Body (core modes)'}</p>
           <div className="grid gap-3">
             {[
               {
@@ -225,6 +225,38 @@ const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLa
           </div>
         </div>
 
+        <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
+          <p className="text-amber-200 font-semibold">{zh ? '④ 参考生视频（独立说明 · 与前端 videogenService 一致）' : '④ Reference-based Video (matches videogenService)'}</p>
+          <p className="text-gray-300 text-sm leading-relaxed space-y-2">
+            <span className="block">
+              {zh
+                ? '**仅适用于阿里云图生视频类模型**（如 `wan2.6-i2v-flash`）。走同一接口 `POST /ai/video/generate`，与前端 `generateVideo` 组包一致。**referenceMaterials** 为引用素材数组，元素为 `{ "type": "image"|"video", "url": "..." }`（即 `imageApi.ts` 的 `ReferenceMaterial`）；可选用 `data`（base64）、`mimeType`。**imageUrl** 为图生视频起始帧，实践中常与首张参考图 URL 一致。不传 `firstFrameUrl` / `lastFrameUrl`。非阿里云请用「图生视频」或「首尾帧」。'
+                : '**Alibaba i2v models only** (e.g. `wan2.6-i2v-flash`). Same `POST /ai/video/generate` as `generateVideo`. **referenceMaterials** entries follow `{ "type": "image"|"video", "url": "..." }` (`ReferenceMaterial` in imageApi.ts); optional `data`, `mimeType`. **imageUrl** is the start frame; often matches the first reference image URL. No keyframes. For other vendors use Image-to-Video or Keyframes.'}
+            </span>
+            <span className="block mt-2 text-gray-200">
+              {zh
+                ? '**prompt 书写规则（须强调）**：**character1、character2…** 与 **referenceMaterials 下标一一对齐**（0 → character1，1 → character2）。元素可为图片或视频，`character2` 即指向第二条素材（如参考视频）。示例见下方请求体：`character1` 对应首条参考图，`character2` 对应第二条参考视频。'
+                : '**Prompt rule**: **character1, character2, …** map to **referenceMaterials** indices (0 → character1, 1 → character2). Items may be image or video—`character2` targets the second slot (e.g. a reference clip). See the sample body: `character1` is the first ref image, `character2` the second ref video.'}
+            </span>
+          </p>
+          <pre className="bg-black/40 rounded-lg border border-gray-800 px-4 py-3 text-xs font-mono text-green-400 overflow-x-auto">{`{
+  "model": "wan2.6-i2v-flash",
+  "userId": "1948598948378775554",
+  "sessionId": "2031992889474203650",
+  "appId": "mcpx-video-studio",
+  "prompt": "character1 根据这个参考图，生成企业宣传视频 character2 ，接着这个视频往下拍。多切几个镜头",
+  "duration": 10,
+  "ratio": "16:9",
+  "resolution": "1080P",
+  "audio": true,
+  "referenceMaterials": [
+    { "type": "image", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg" },
+    { "type": "video", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/30/4773506735b04b7e98e18b76d180cdfb.mp4" }
+  ],
+  "imageUrl": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg"
+}`}</pre>
+        </div>
+
         <div className="space-y-3">
           <p className="text-gray-300 font-medium">{zh ? '可选参数' : 'Optional Parameters'}</p>
           <div className="overflow-x-auto">
@@ -238,11 +270,12 @@ const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLa
               </thead>
               <tbody className="text-gray-300">
                 {[
-                  ['audio', 'boolean', zh ? '是否生成同步音频' : 'Generate synchronized audio'],
+                  ['referenceMaterials', 'object[]', zh ? '参考素材：每项 `{ type: "image"|"video", url?, data?, mimeType? }`；阿里云参考生视频必填引用图时在此声明，常与 imageUrl 同图' : 'Reference items `{ type, url?, data?, mimeType? }`; Alibaba ref-to-video uses this, often same URL as imageUrl'],
+                  ['imageUrl', 'string', zh ? '图生视频起始帧；阿里云参考场景下常与 referenceMaterials[0].url 相同' : 'Start frame; for Alibaba ref flow often matches referenceMaterials URL'],
+                  ['audio', 'boolean', zh ? '是否生成同步音频（阿里云等模型）' : 'Synchronized audio flag'],
                   ['audioUrl', 'string', zh ? '背景音频文件 URL' : 'Background audio file URL'],
                   ['seed', 'number', zh ? '随机种子，用于复现结果' : 'Seed for reproducible results'],
-                  ['refImages', 'string[]', zh ? '额外参考图（角色图、场景图等）' : 'Extra reference images (characters, scenes)'],
-                  ['referenceMaterials', 'object[]', zh ? '@功能引用的素材列表' : 'Materials referenced via @ mention'],
+                  ['refImages', 'string[]', zh ? '额外参考图 URL 列表（与 referenceMaterials 不同字段）' : 'Extra ref image URLs (refImages array)'],
                 ].map(([p, t, d], i) => (
                   <tr key={i} className="border-b border-gray-800/50">
                     <td className="py-2.5 font-mono text-orange-300 pr-4">{p}</td>
@@ -955,6 +988,33 @@ data: [DONE]`
 data: {"choices":[{"delta":{"content":"{\\"lastFrameUrl\\":\\"https://cdn.../last.jpg\\"}"}}]}
 data: {"choices":[{"delta":{"content":"<video>https://cdn.../result.mp4</video>"}}]}
 data: [DONE]`
+        },
+        {
+          method: 'POST',
+          endpoint: '/ai/video/generate',
+          title: currentLanguage === 'zh' ? '参考生视频（阿里云 · referenceMaterials + imageUrl）' : 'Reference Video (Alibaba: referenceMaterials + imageUrl)',
+          description: currentLanguage === 'zh'
+            ? '**仅适用于阿里云图生视频类模型**（如 `wan2.6-i2v-flash`）。与前端 `generateVideo` 一致：**referenceMaterials** 可为 `image` 与 `video` 混排（`ReferenceMaterial`）；**imageUrl** 多为起始帧、常与首条参考图一致。**character1 / character2…** 与数组下标对齐，见下方完整示例。非阿里云请用「图生视频」或「首尾帧」。'
+            : '**Alibaba i2v only** (e.g. `wan2.6-i2v-flash`). Same as `generateVideo`: **referenceMaterials** may mix `image` and `video` (`ReferenceMaterial`); **imageUrl** is usually the start frame, often same as the first ref image. **character1 / character2…** align with indices—see sample body. Others: Image-to-Video or Keyframes.',
+          request: `{
+  "model": "wan2.6-i2v-flash",
+  "userId": "1948598948378775554",
+  "sessionId": "2031992889474203650",
+  "appId": "mcpx-video-studio",
+  "prompt": "character1 根据这个参考图，生成企业宣传视频 character2 ，接着这个视频往下拍。多切几个镜头",
+  "duration": 10,
+  "ratio": "16:9",
+  "resolution": "1080P",
+  "audio": true,
+  "referenceMaterials": [
+    { "type": "image", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg" },
+    { "type": "video", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/30/4773506735b04b7e98e18b76d180cdfb.mp4" }
+  ],
+  "imageUrl": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg"
+}`,
+          response: `// 与文生视频相同的 SSE 流式响应
+data: {"choices":[{"delta":{"content":"<video>https://cdn.../result.mp4</video>"}}]}
+data: [DONE]`
         }
       ]
     },
@@ -999,15 +1059,20 @@ data: [DONE]`
           ]
         },
         {
-          method: 'GET',
+          method: 'POST',
           endpoint: '/app/webgen/chat/gen/code',
           title: currentLanguage === 'zh' ? '对话生成代码 (SSE)' : 'Generate Code (SSE)',
-          description: currentLanguage === 'zh' ? '对话式生成/修改代码，SSE 流式返回' : 'Conversational code generation via SSE stream',
+          description: currentLanguage === 'zh' ? '对话式生成/修改代码，POST JSON 请求体，SSE 流式返回' : 'Conversational code generation: POST JSON body, SSE stream response',
           params: [
-            { name: 'appId', type: 'string', description: currentLanguage === 'zh' ? '应用ID' : 'App ID' },
-            { name: 'message', type: 'string', description: currentLanguage === 'zh' ? '用户指令' : 'User instruction' },
-            { name: 'stream', type: 'boolean', description: currentLanguage === 'zh' ? '固定传 true' : 'Always true' }
+            { name: 'appId', type: 'string', description: currentLanguage === 'zh' ? '应用ID（JSON body）' : 'App ID (JSON body)' },
+            { name: 'message', type: 'string', description: currentLanguage === 'zh' ? '用户指令（JSON body）' : 'User instruction (JSON body)' },
+            { name: 'stream', type: 'boolean', description: currentLanguage === 'zh' ? '固定传 true（JSON body）' : 'Always true (JSON body)' }
           ],
+          request: `{
+  "appId": "string",
+  "message": "string",
+  "stream": true
+}`,
           response: `data: {"d":"<html>..."}
 data: [DONE]`
         },

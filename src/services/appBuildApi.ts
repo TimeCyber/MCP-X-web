@@ -147,10 +147,8 @@ export const chatToGenCode = async (
   onComplete?: () => void,
 ) => {
   const token = localStorage.getItem('token');
-  
-  // 构建 GET 请求参数，保持 message 不变；可选追加 messages（JSON 字符串）
-  const params = new URLSearchParams({ appId, message, stream: 'true' });
-  const url = `${API_BASE_URL}/app/webgen/chat/gen/code?${params.toString()}`;
+
+  const url = `${API_BASE_URL}/app/webgen/chat/gen/code`;
 
   // 提升到函数作用域，供 catch 和流结束时冲刷使用
   let buffer = '';
@@ -175,9 +173,10 @@ export const chatToGenCode = async (
 
   try {
     const response = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
         'Authorization': token ? `Bearer ${token}` : '',
+        'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
         'Accept': 'text/event-stream',
         'Connection': 'keep-alive',
@@ -185,6 +184,11 @@ export const chatToGenCode = async (
         'X-Accel-Buffering': 'no',
         'Pragma': 'no-cache',
       },
+      body: JSON.stringify({
+        appId,
+        message,
+        stream: true,
+      }),
       // 添加信号控制，用于超时中断（延长至30分钟，适配大模型慢返回）
       signal: AbortSignal.timeout ? AbortSignal.timeout(1800000) : undefined, // 30分钟超时
     });

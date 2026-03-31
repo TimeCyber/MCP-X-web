@@ -175,6 +175,14 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       return;
     }
 
+    // dev 代理预览（Vite/React）：跨域时不要 fetch+srcdoc 整页替换。
+    // about:srcdoc 下以 / 开头的模块 URL（/@vite/client、/src/main.tsx）会按「站点根」解析，
+    // 落到错误路径拿到 text/html，触发 “Expected JavaScript module but got text/html”。
+    const iframeSrcAttr = iframeRef.current.getAttribute('src') || '';
+    if (/\/app\/webgen\/dev-proxy\//i.test(iframeSrcAttr)) {
+      return;
+    }
+
     // 2. 跨域（React dev server 不同端口）：fetch HTML → 注入脚本 → 作为 srcdoc 写回
     if (isSrcdocInjectedRef.current) {
       // srcdoc 已写入，这次是 srcdoc 加载完成，发送初始状态即可

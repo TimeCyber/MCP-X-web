@@ -13,7 +13,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { editImage, generateImageFromText, fetchImageAsBase64, ReferenceMaterial } from '../services/imageApi';
 import { modelApi, ModelInfo } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
-import { generateVideo } from '../services/videogenService';
+import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
@@ -1099,13 +1099,13 @@ const ImageEditorPage: React.FC = () => {
   }, []);
 
   // 构建referenceMaterials数组，按照@标签在prompt中出现的顺序排列
-  const buildReferenceMaterials = useCallback(async (): Promise<ReferenceMaterial[]> => {
+  const buildReferenceMaterials = useCallback(async (sourcePrompt: string): Promise<ReferenceMaterial[]> => {
     // 找出prompt中所有@标签，按出现顺序排列并去重
     const tagPattern = /@(?:图片|视频)\d+/g;
     const orderedTags: string[] = [];
     let match: RegExpExecArray | null;
     const tagPatternCopy = new RegExp(tagPattern);
-    while ((match = tagPatternCopy.exec(prompt)) !== null) {
+    while ((match = tagPatternCopy.exec(sourcePrompt)) !== null) {
       if (!orderedTags.includes(match[0])) {
         orderedTags.push(match[0]);
       }
@@ -1152,7 +1152,7 @@ const ImageEditorPage: React.FC = () => {
     }
 
     return materials;
-  }, [atMentionedElements, prompt]);
+  }, [atMentionedElements]);
 
   // 处理prompt替换，将@标签替换为后端需要的格式
   // 按照@标签在prompt中出现的顺序，依次替换为 character1, character2, ...
@@ -1648,8 +1648,6 @@ const ImageEditorPage: React.FC = () => {
         video.load();
 
         setVideoProgress({ message: '视频生成完成！' });
-        // 清除@的元素
-        setAtMentionedElements([]);
         toast.success('视频生成成功！');
       } else {
         throw new Error('视频生成失败');
@@ -2798,17 +2796,26 @@ const ImageEditorPage: React.FC = () => {
 
   // Handle file upload
   const handleFileUpload = async (file: File) => {
-    const isVideo = file.type.startsWith('video/');
+    // 部分浏览器对 .mov 可能不给正确的 video MIME，这里用扩展名兜底
+    const isVideo =
+      file.type.startsWith('video/') ||
+      /\.(mp4|mov)$/i.test(file.name);
 
     if (isVideo) {
       try {
-        const { dataUrl } = await fileToDataUrl(file);
+        // 视频直接上传到 OSS，后续所有处理都基于 OSS URL
+        const ossUrl = await uploadFileToOss(file);
         const video = document.createElement('video');
+        video.crossOrigin = 'anonymous';
+        video.preload = 'metadata';
+        video.muted = true;
+        video.playsInline = true;
 
         await new Promise((resolve, reject) => {
           video.onloadedmetadata = () => resolve(undefined);
-          video.onerror = () => reject(new Error('Failed to load video'));
-          video.src = dataUrl;
+          video.onerror = () => reject(new Error('Failed to load video metadata'));
+          video.src = ossUrl;
+          video.load();
         });
 
         const maxWidth = canvasSize.width - 200;
@@ -2835,8 +2842,8 @@ const ImageEditorPage: React.FC = () => {
           y: displayY,
           width: displayWidth,
           height: displayHeight,
-          videoUrl: dataUrl,
-          href: dataUrl,
+          videoUrl: ossUrl,
+          href: ossUrl,
           video: video,
           isPlaying: false,
           visible: true,
@@ -2848,9 +2855,9 @@ const ImageEditorPage: React.FC = () => {
           return newElements;
         });
         setSelectedElementIds([newElement.id]);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load video:', error);
-        toast.error('Failed to load video');
+        toast.error(error?.message || 'Failed to load video');
       }
     } else {
       try {
@@ -2934,11 +2941,18 @@ const ImageEditorPage: React.FC = () => {
     try {
       // 处理@功能：替换prompt和构建referenceMaterials
       const processedPrompt = processPromptForBackend(originalPrompt);
-      const referenceMaterials = await buildReferenceMaterials();
+      const referenceMaterials = await buildReferenceMaterials(originalPrompt);
 
       const selectedModelInfo = models.find(model => model.id === selectedModel);
       const modelName = selectedModelInfo?.modelName;
-      const result = await generateImageFromText(processedPrompt, modelName, currentSessionId, selectedImageSize, referenceMaterials);
+      const result = await generateImageFromText(
+        processedPrompt,
+        modelName,
+        currentSessionId,
+        selectedImageSize,
+        undefined,
+        referenceMaterials
+      );
 
       // 解析图片URL - 处理特殊格式 data:<images>url</images>data:data:
       const extractImageUrl = (src: string | null | undefined): string | null => {
@@ -3329,7 +3343,7 @@ const ImageEditorPage: React.FC = () => {
 
       // 处理@功能：替换prompt和构建referenceMaterials（包含所有@提及元素）
       const processedPrompt = processPromptForBackend(prompt);
-      const referenceMaterials = await buildReferenceMaterials();
+      const referenceMaterials = await buildReferenceMaterials(prompt);
 
       // 确定 startImageUrl：
       // 优先使用画布选中的第一张图；没有选中时，取@提及的第一张图片
@@ -3485,8 +3499,6 @@ const ImageEditorPage: React.FC = () => {
         video.load();
 
         setVideoProgress({ message: '视频生成完成！' });
-        // 清除@的元素
-        setAtMentionedElements([]);
         toast.success('视频生成成功！');
       } else {
         throw new Error('视频生成失败');
@@ -3568,7 +3580,7 @@ const ImageEditorPage: React.FC = () => {
 
       // 处理@功能：替换prompt和构建referenceMaterials
       const processedPrompt = processPromptForBackend(videoPrompt || '生成流畅的视频动画');
-      const referenceMaterials = await buildReferenceMaterials();
+      const referenceMaterials = await buildReferenceMaterials(videoPrompt || '');
 
       const result = await generateVideo(
         processedPrompt,
@@ -5063,8 +5075,9 @@ const ImageEditorPage: React.FC = () => {
             }
           };
           
-          // 判断是否显示按钮：未播放时始终显示，播放时只有悬停才显示
-          const shouldShowButton = !videoEl.isPlaying || hoveredVideoId === videoEl.id;
+          // 判断是否显示按钮：避免播放中因为悬停态丢失导致按钮“莫名消失”
+          // 现在无论播放/暂停都保持按钮可见（图标由 videoEl.isPlaying 决定）
+          const shouldShowButton = true;
           
           return (
             <div key={`video-container-${videoEl.id}`}>
@@ -5565,7 +5578,7 @@ const ImageEditorPage: React.FC = () => {
                             // 找到画布上对应的元素并设置hover状态
                             const canvasElement = currentElements.find(el =>
                               el.type === element.type &&
-                              (el.src === element.src || (el as any).href === element.src)
+                              ((el as any).href === element.src || (el as any).videoUrl === element.src)
                             );
                             if (canvasElement) {
                               setHoveredElementId(canvasElement.id);
@@ -5895,7 +5908,7 @@ const ImageEditorPage: React.FC = () => {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept="image/*,video/mp4,video/quicktime,.mp4,.mov,.MOV"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
