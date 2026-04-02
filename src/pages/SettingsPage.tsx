@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
-import { User, CreditCard, Trash2, Award, MessageSquare, ShoppingCart, Wallet } from 'lucide-react';
+import { User, CreditCard, Trash2, Award, MessageSquare, ShoppingCart, Wallet, Bot, Plus, Pencil, X, Sparkles } from 'lucide-react';
 import { api } from '../services/api';
+import { chatApi, streamChatSend } from '../services/chatApi';
+import type { AgentCategory } from '../types';
+import { toast } from '../utils/toast';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useNavigate } from 'react-router-dom';
 import { Modal } from 'antd';
 import { QRCodeCanvas } from 'qrcode.react';
 
 export const SettingsPage: React.FC = () => {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('mine');
   const [formData, setFormData] = useState({
     name: localStorage.getItem('nickname') || '',
@@ -36,6 +41,212 @@ export const SettingsPage: React.FC = () => {
   const [paymentOrder, setPaymentOrder] = useState<any>(null);
   const paymentPollTimer = useRef<any>(null);
   const [continuingOrderNo, setContinuingOrderNo] = useState<string | null>(null);
+  const [myAgents, setMyAgents] = useState<any[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentCategories, setAgentCategories] = useState<AgentCategory[]>([]);
+  const [agentModalOpen, setAgentModalOpen] = useState(false);
+  const [agentModalMode, setAgentModalMode] = useState<'create' | 'edit'>('create');
+  const [agentSubmitting, setAgentSubmitting] = useState(false);
+  const [agentPromptGenLoading, setAgentPromptGenLoading] = useState(false);
+  const [agentForm, setAgentForm] = useState({
+    id: '' as string | number | '',
+    name: '',
+    description: '',
+    systemPrompt: '',
+    categoryId: '' as '' | number,
+    nameEn: '',
+    descriptionEn: '',
+  });
+
+  const parseMyAgentsRows = (res: any): any[] => {
+    if (!res || res.code !== 200) return [];
+    const d = res.data;
+    if (d && Array.isArray(d.rows)) return d.rows;
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(res.rows)) return res.rows;
+    return [];
+  };
+
+  const loadAgentCategories = async () => {
+    try {
+      const categoriesRes = await api.agent.getCategories();
+      if (categoriesRes.code !== 200) return;
+      let categoriesData: any[] = [];
+      const raw = categoriesRes.data as any;
+      if (raw?.categories) categoriesData = raw.categories;
+      else if (Array.isArray(raw)) categoriesData = raw;
+      const active = (categoriesData || []).filter((c: AgentCategory) => c.status === 1);
+      setAgentCategories(active);
+    } catch (e) {
+      console.error('加载 Agent 分类失败', e);
+    }
+  };
+
+  const fetchMyAgents = async () => {
+    setAgentsLoading(true);
+    try {
+      const res = await api.agent.getMyList();
+      setMyAgents(parseMyAgentsRows(res));
+    } catch (e) {
+      console.error('加载我的 Agent 失败', e);
+      toast.error('加载我的 Agent 失败');
+      setMyAgents([]);
+    } finally {
+      setAgentsLoading(false);
+    }
+  };
+
+  const openCreateAgentModal = () => {
+    setAgentModalMode('create');
+    setAgentForm({
+      id: '',
+      name: '',
+      description: '',
+      systemPrompt: '',
+      categoryId: '',
+      nameEn: '',
+      descriptionEn: '',
+    });
+    setAgentModalOpen(true);
+  };
+
+  const openEditAgentModal = (row: any) => {
+    setAgentModalMode('edit');
+    setAgentForm({
+      id: row.id,
+      name: row.name || '',
+      description: row.description || '',
+      systemPrompt: row.systemPromote || row.systemPrompt || '',
+      categoryId: row.categoryId != null && row.categoryId !== '' ? Number(row.categoryId) : '',
+      nameEn: row.nameEn || '',
+      descriptionEn: row.descriptionEn || '',
+    });
+    setAgentModalOpen(true);
+  };
+
+  const buildAgentWriteBody = (includeId?: string | number): Record<string, unknown> => {
+    const description = agentForm.description.trim();
+    const body: Record<string, unknown> = {
+      name: agentForm.name.trim(),
+      description,
+      systemRole: description,
+      systemPrompt: agentForm.systemPrompt.trim(),
+    };
+    if (agentForm.categoryId !== '' && agentForm.categoryId != null) body.categoryId = Number(agentForm.categoryId);
+    if (agentForm.nameEn.trim()) body.nameEn = agentForm.nameEn.trim();
+    if (agentForm.descriptionEn.trim()) body.descriptionEn = agentForm.descriptionEn.trim();
+    if (includeId != null && includeId !== '') body.id = includeId;
+    return body;
+  };
+
+  const handleAiGenerateSystemPrompt = async () => {
+    const name = agentForm.name.trim();
+    const desc = agentForm.description.trim();
+    if (!name) return toast.error('请先填写 Agent 名称');
+    if (!desc) return toast.error('请先填写 Agent 描述');
+    const currentUserId = localStorage.getItem('userId');
+    const currentToken = localStorage.getItem('token');
+    if (!currentUserId || !currentToken) return toast.error('请先登录后再使用 AI 生成');
+
+    setAgentPromptGenLoading(true);
+    try {
+      const sessionResponse = await chatApi.createSession({
+        userId: currentUserId,
+        sessionContent: '生成 Agent 系统提示词',
+        sessionTitle: '生成系统提示词',
+        remark: 'settings-agent-prompt-gen',
+        appId: 'mcpx-chat',
+      });
+      if (sessionResponse.code !== 200 || sessionResponse.data == null) {
+        toast.error((sessionResponse as any).msg || (sessionResponse as any).message || '创建会话失败');
+        return;
+      }
+      const sessionIdForGen = String(sessionResponse.data);
+      const userPrompt = `Agent 名称：${name}\n\nAgent 描述：${desc}\n\n请根据以上信息，撰写一段完整、可直接用作该对话 Agent 系统提示词（system prompt）的正文。要求语气专业、边界清晰、突出角色与任务。只输出提示词正文，不要标题、不要代码围栏、不要解释性前后缀。`;
+      let aggregated = '';
+      await new Promise<void>((resolve, reject) => {
+        streamChatSend(
+          {
+            messages: [{ role: 'user', content: userPrompt }],
+            sessionId: sessionIdForGen,
+            userId: parseInt(currentUserId, 10),
+            stream: true,
+            isMcp: false,
+            model: 'deepseek-chat',
+            appId: 'mcpx-chat',
+            sysPrompt: '你是专业的 AI Agent 配置助手，只根据用户提供的名称与描述生成系统提示词正文，不要输出 Markdown 代码块或任何与正文无关的内容。',
+          },
+          (chunk: any) => {
+            if (chunk?.type === 'agent_step') return;
+            const delta = chunk?.choices?.[0]?.delta?.content;
+            if (delta) aggregated += delta;
+          },
+          (err) => reject(err),
+          () => resolve()
+        );
+      });
+      const finalText = aggregated.trim();
+      if (!finalText) return toast.error('未收到模型回复，请重试');
+      setAgentForm((p) => ({ ...p, systemPrompt: finalText }));
+      toast.success('已填入系统提示词');
+    } catch (e: any) {
+      console.error('AI 生成系统提示词失败', e);
+      toast.error(e?.message || '生成失败，请重试');
+    } finally {
+      setAgentPromptGenLoading(false);
+    }
+  };
+
+  const handleAgentModalOk = async () => {
+    if (!agentForm.name.trim()) return toast.error('请填写 Agent 名称');
+    if (!agentForm.description.trim()) return toast.error('请填写描述');
+    if (!agentForm.systemPrompt.trim()) return toast.error('请填写系统提示词（systemPrompt）');
+    setAgentSubmitting(true);
+    try {
+      if (agentModalMode === 'create') {
+        const res = await api.agent.createMy(buildAgentWriteBody());
+        if (res.code === 200) {
+          toast.success('创建成功');
+          setAgentModalOpen(false);
+          await fetchMyAgents();
+        } else {
+          toast.error((res as any).msg || (res as any).message || '创建失败');
+        }
+      } else {
+        const id = agentForm.id;
+        if (id === '' || id == null) return toast.error('缺少 Agent ID');
+        const res = await api.agent.updateMy(id, buildAgentWriteBody(id));
+        if (res.code === 200) {
+          toast.success('保存成功');
+          setAgentModalOpen(false);
+          await fetchMyAgents();
+        } else {
+          toast.error((res as any).msg || (res as any).message || '保存失败');
+        }
+      }
+    } catch (e: any) {
+      console.error('保存 Agent 失败', e);
+      toast.error(e?.message || '保存失败');
+    } finally {
+      setAgentSubmitting(false);
+    }
+  };
+
+  const handleDeleteAgent = async (id: string | number) => {
+    if (!window.confirm('确认删除该 Agent 吗？')) return;
+    try {
+      const res = await api.agent.deleteMy(id);
+      if (res.code === 200) {
+        toast.success('删除成功');
+        await fetchMyAgents();
+      } else {
+        toast.error((res as any).msg || (res as any).message || '删除失败');
+      }
+    } catch (e: any) {
+      console.error('删除 Agent 失败', e);
+      toast.error(e?.message || '删除失败');
+    }
+  };
 
   const stopPaymentPolling = () => {
     if (paymentPollTimer.current) {
@@ -184,6 +395,9 @@ export const SettingsPage: React.FC = () => {
       fetchOrders(1);
     } else if (activeTab === 'mine') {
       fetchBalanceData();
+    } else if (activeTab === 'agents') {
+      fetchMyAgents();
+      loadAgentCategories();
     }
   }, [activeTab]);
 
@@ -282,6 +496,16 @@ export const SettingsPage: React.FC = () => {
               >
                 <Award size={18} className="mr-3" />
                 {t('settings.tabs.rewards')}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('agents')}
+                className={`w-full text-left px-4 py-2 rounded-lg flex items-center ${
+                  activeTab === 'agents' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                }`}
+              >
+                <Bot size={18} className="mr-3" />
+                Agent 管理
               </button>
               
               {/* <button
@@ -798,6 +1022,69 @@ export const SettingsPage: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {activeTab === 'agents' && (
+                <div className="bg-gray-900 rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold">Agent 管理</h2>
+                    <button
+                      type="button"
+                      onClick={openCreateAgentModal}
+                      className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-black px-4 py-2 rounded-lg font-medium"
+                    >
+                      <Plus size={16} />
+                      新建 Agent
+                    </button>
+                  </div>
+                  {/* <div className="text-sm text-gray-400 mb-4">
+                    系统提示词请使用字段 <code className="text-orange-400">systemPrompt</code>。
+                  </div> */}
+                  <div className="space-y-3">
+                    {agentsLoading ? (
+                      <div className="text-gray-400">加载中...</div>
+                    ) : myAgents.length === 0 ? (
+                      <div className="text-gray-400">暂无 Agent，点击右上角新建。</div>
+                    ) : (
+                      myAgents.map((row) => (
+                        <div key={row.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <div className="text-white font-medium">{row.name || '-'}</div>
+                              <div className="text-sm text-gray-400 mt-1 line-clamp-2">{row.description || '-'}</div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/chat?agent=${row.id}`)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-orange-500/20 hover:bg-orange-500/30 text-orange-300"
+                              >
+                                <MessageSquare size={14} />
+                                对话
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditAgentModal(row)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-700 hover:bg-gray-600 text-gray-100"
+                              >
+                                <Pencil size={14} />
+                                编辑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAgent(row.id)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300"
+                              >
+                                <Trash2 size={14} />
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
               
               {/* 隐藏账单与订阅内容区 */}
               {/*
@@ -876,7 +1163,97 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       </main>
-      
+
+      <Modal
+        title={<span className="text-white font-semibold text-base">{agentModalMode === 'create' ? '新建 Agent' : '编辑 Agent'}</span>}
+        open={agentModalOpen}
+        onCancel={() => {
+          if (!agentSubmitting && !agentPromptGenLoading) setAgentModalOpen(false);
+        }}
+        onOk={handleAgentModalOk}
+        confirmLoading={agentSubmitting}
+        okText="保存"
+        cancelText="取消"
+        width={640}
+        destroyOnClose
+        rootClassName="settings-agent-modal"
+        classNames={{
+          content: '!bg-gray-900 !border !border-gray-700 !rounded-2xl shadow-xl',
+          header: '!bg-gray-900 !border-b !border-gray-700 !pb-4 !mb-0',
+          body: '!bg-gray-900 !pt-4',
+          footer: '!bg-gray-900 !border-t !border-gray-700 !mt-0',
+          mask: '!bg-black/70',
+        }}
+        okButtonProps={{
+          disabled: agentPromptGenLoading,
+          className: '!h-auto !py-2 !px-5 !bg-orange-500 !text-black !border-none hover:!bg-orange-600 font-medium rounded-lg',
+        }}
+        cancelButtonProps={{
+          className: '!h-auto !py-2 !px-5 !bg-gray-800 !text-gray-200 !border-gray-600 hover:!bg-gray-700 hover:!text-white rounded-lg',
+        }}
+        closeIcon={<X className="text-gray-400 hover:text-white" size={20} strokeWidth={2} />}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">名称 *</label>
+            <input
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder:text-gray-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/40"
+              value={agentForm.name}
+              onChange={(e) => setAgentForm((p) => ({ ...p, name: e.target.value }))}
+              placeholder="Agent 名称"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Agent描述 *</label>
+            <textarea
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder:text-gray-500 min-h-[80px] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/40 resize-y"
+              value={agentForm.description}
+              onChange={(e) => setAgentForm((p) => ({ ...p, description: e.target.value }))}
+              placeholder="简要描述用途"
+            />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <label className="block text-sm font-medium text-gray-300">系统提示词（systemPrompt）*</label>
+              <button
+                type="button"
+                onClick={handleAiGenerateSystemPrompt}
+                disabled={agentPromptGenLoading || agentSubmitting}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-orange-500/50 bg-orange-500/15 px-3 py-1.5 text-sm font-medium text-orange-300 hover:bg-orange-500/25 hover:text-orange-200 disabled:opacity-50 disabled:pointer-events-none focus:outline-none focus:ring-1 focus:ring-orange-500/50"
+              >
+                <Sparkles className="h-4 w-4 shrink-0" strokeWidth={2} />
+                {agentPromptGenLoading ? '生成中…' : 'AI 生成'}
+              </button>
+            </div>
+            <textarea
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder:text-gray-500 min-h-[120px] font-mono text-sm focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/40 resize-y"
+              value={agentForm.systemPrompt}
+              onChange={(e) => setAgentForm((p) => ({ ...p, systemPrompt: e.target.value }))}
+              placeholder="对应后端 systemPromote，请求字段名使用 systemPrompt"
+              disabled={agentPromptGenLoading}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">分类（可选）</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/40 [&>option]:bg-gray-800 [&>option]:text-white"
+              value={agentForm.categoryId === '' ? '' : String(agentForm.categoryId)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setAgentForm((p) => ({ ...p, categoryId: v === '' ? '' : Number(v) }));
+              }}
+            >
+              <option value="">默认（服务端选用首个启用分类）</option>
+              {agentCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Modal>
+
       <Footer />
       {/* 微信支付模态框（继续支付） */}
       <Modal

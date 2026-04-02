@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Video, Loader2, X, Clock, Maximize2, Play } from 'lucide-react';
+import { ArrowLeft, Video, Loader2, X, Clock, Maximize2, Play, Monitor, RectangleHorizontal } from 'lucide-react';
 import { Toolbar } from '../components/image-editor/Toolbar';
 import { PromptBar } from '../components/image-editor/PromptBar';
 import { Loader } from '../components/image-editor/Loader';
@@ -791,6 +791,7 @@ const ImageEditorPage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const floatingPromptInputCardRef = useRef<HTMLDivElement>(null);
 
   // @功能相关状态
   const [sessionMessages, setSessionMessages] = useState<any[]>([]);
@@ -855,6 +856,8 @@ const ImageEditorPage: React.FC = () => {
   const [videoResolution, setVideoResolution] = useState<'480P' | '720P' | '1080P'>('1080P');
   const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
   const [videoDuration, setVideoDuration] = useState<number>(10);
+  /** 底部视频参数：与模型选择器一致的下拉（分辨率 / 比例 / 时长） */
+  const [openVideoParamMenu, setOpenVideoParamMenu] = useState<null | 'resolution' | 'ratio' | 'duration'>(null);
   const [videoPrompt, setVideoPrompt] = useState<string>('');
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [videoProgress, setVideoProgress] = useState<{ message: string; current?: number; total?: number } | null>(null);
@@ -878,6 +881,7 @@ const ImageEditorPage: React.FC = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const videoParamsBarRef = useRef<HTMLDivElement>(null);
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // 同步pan值到ref，避免闭包问题
@@ -912,6 +916,95 @@ const ImageEditorPage: React.FC = () => {
     };
   }, []);
 
+  // 构建所有可用的媒体元素列表（从 session messages + 画布元素），供 @功能 和粘贴解析共用
+  const buildAllMediaElements = useCallback((): Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> => {
+    const allMediaElements: Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> = [];
+    const addedSrcs = new Set<string>();
+
+    // 1. 先从 session messages 中解析
+    for (const msg of sessionMessages) {
+      if (msg.role === 'assistant' && msg.content) {
+        const content = msg.content;
+        const imageUrls: string[] = [];
+        const videoUrls: string[] = [];
+
+        const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
+        for (const match of imagesTagMatches) {
+          const url = match[1]?.trim();
+          if (url && (url.startsWith('http') || url.startsWith('data:'))) imageUrls.push(url);
+        }
+        const videoTagMatches = content.matchAll(/<video>(.*?)<\/video>/gs);
+        for (const match of videoTagMatches) {
+          const url = match[1]?.trim();
+          if (url && url.startsWith('http')) videoUrls.push(url);
+        }
+        const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
+        for (const match of urlMatches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
+        }
+        const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
+        for (const match of videoUrlMatches) {
+          const url = match[1];
+          if (url && !videoUrls.includes(url)) videoUrls.push(url);
+        }
+        const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
+        for (const match of base64Matches) {
+          const url = match[1];
+          if (url && !imageUrls.includes(url)) imageUrls.push(url);
+        }
+
+        imageUrls.forEach((url) => {
+          addedSrcs.add(url);
+          allMediaElements.push({
+            type: 'image', src: url,
+            alt: `图片 ${allMediaElements.length + 1}`,
+            id: `at_${msg.id}_image_${allMediaElements.length}`,
+            listIndex: allMediaElements.length + 1
+          });
+        });
+        videoUrls.forEach((url) => {
+          addedSrcs.add(url);
+          allMediaElements.push({
+            type: 'video', src: url,
+            alt: `视频 ${allMediaElements.length + 1}`,
+            id: `at_${msg.id}_video_${allMediaElements.length}`,
+            listIndex: allMediaElements.length + 1
+          });
+        });
+      }
+    }
+
+    // 2. 从画布上的元素补充
+    for (const el of elements) {
+      if (el.type === 'image' && (el as any).href) {
+        const src = (el as any).href as string;
+        if (!addedSrcs.has(src)) {
+          addedSrcs.add(src);
+          allMediaElements.push({
+            type: 'image', src,
+            alt: `图片 ${allMediaElements.length + 1}`,
+            id: `canvas_${el.id}`,
+            listIndex: allMediaElements.length + 1
+          });
+        }
+      } else if (el.type === 'video' && (el as any).videoUrl) {
+        const src = (el as any).videoUrl as string;
+        if (!addedSrcs.has(src)) {
+          addedSrcs.add(src);
+          allMediaElements.push({
+            type: 'video', src,
+            alt: `视频 ${allMediaElements.length + 1}`,
+            id: `canvas_${el.id}`,
+            listIndex: allMediaElements.length + 1
+          });
+        }
+      }
+    }
+
+    return allMediaElements;
+  }, [sessionMessages, elements]);
+
   // 处理@输入逻辑
   const handleAtInput = useCallback(async (value: string, cursorPos: number) => {
     const atIndex = value.lastIndexOf('@', cursorPos - 1);
@@ -928,118 +1021,7 @@ const ImageEditorPage: React.FC = () => {
 
     console.log('@功能触发:', { sessionMessagesCount: sessionMessages.length, canvasElementsCount: elements.length, textAfterAt });
 
-    // 解析session messages中的所有媒体元素（图片和视频）
-    const allMediaElements: Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> = [];
-    const addedSrcs = new Set<string>(); // 用于去重
-
-    // 1. 先从 session messages 中解析
-    for (const msg of sessionMessages) {
-      if (msg.role === 'assistant' && msg.content) {
-        const content = msg.content;
-
-        // 解析图片URL
-        const imageUrls: string[] = [];
-        const videoUrls: string[] = [];
-
-        // 1. 解析 <images> 标签中的图片URL
-        const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
-        for (const match of imagesTagMatches) {
-          const url = match[1]?.trim();
-          if (url && (url.startsWith('http') || url.startsWith('data:'))) {
-            imageUrls.push(url);
-          }
-        }
-
-        // 2. 解析 <video> 标签中的视频URL
-        const videoTagMatches = content.matchAll(/<video>(.*?)<\/video>/gs);
-        for (const match of videoTagMatches) {
-          const url = match[1]?.trim();
-          if (url && url.startsWith('http')) {
-            videoUrls.push(url);
-          }
-        }
-
-        // 3. 解析直接的图片 URL
-        const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
-        for (const match of urlMatches) {
-          const url = match[1];
-          if (url && !imageUrls.includes(url)) {
-            imageUrls.push(url);
-          }
-        }
-
-        // 4. 解析直接的视频 URL
-        const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
-        for (const match of videoUrlMatches) {
-          const url = match[1];
-          if (url && !videoUrls.includes(url)) {
-            videoUrls.push(url);
-          }
-        }
-
-        // 5. 解析 base64 图片
-        const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
-        for (const match of base64Matches) {
-          const url = match[1];
-          if (url && !imageUrls.includes(url)) {
-            imageUrls.push(url);
-          }
-        }
-
-        // 添加图片元素
-        imageUrls.forEach((url, index) => {
-          addedSrcs.add(url);
-          allMediaElements.push({
-            type: 'image',
-            src: url,
-            alt: `图片 ${allMediaElements.length + 1}`,
-            id: `at_${msg.id}_image_${index}`,
-            listIndex: allMediaElements.length + 1
-          });
-        });
-
-        // 添加视频元素
-        videoUrls.forEach((url, index) => {
-          addedSrcs.add(url);
-          allMediaElements.push({
-            type: 'video',
-            src: url,
-            alt: `视频 ${allMediaElements.length + 1}`,
-            id: `at_${msg.id}_video_${index}`,
-            listIndex: allMediaElements.length + 1
-          });
-        });
-      }
-    }
-
-    // 2. 从画布上的元素补充（处理缓存加载、session未加载等情况）
-    for (const el of elements) {
-      if (el.type === 'image' && (el as any).href) {
-        const src = (el as any).href as string;
-        if (!addedSrcs.has(src)) {
-          addedSrcs.add(src);
-          allMediaElements.push({
-            type: 'image',
-            src: src,
-            alt: `图片 ${allMediaElements.length + 1}`,
-            id: `canvas_${el.id}`,
-            listIndex: allMediaElements.length + 1
-          });
-        }
-      } else if (el.type === 'video' && (el as any).videoUrl) {
-        const src = (el as any).videoUrl as string;
-        if (!addedSrcs.has(src)) {
-          addedSrcs.add(src);
-          allMediaElements.push({
-            type: 'video',
-            src: src,
-            alt: `视频 ${allMediaElements.length + 1}`,
-            id: `canvas_${el.id}`,
-            listIndex: allMediaElements.length + 1
-          });
-        }
-      }
-    }
+    const allMediaElements = buildAllMediaElements();
 
     // 过滤匹配的元素
     const filteredElements = allMediaElements.filter(element => {
@@ -1055,7 +1037,64 @@ const ImageEditorPage: React.FC = () => {
     setSelectedSuggestionIndex(-1); // 重置选择索引
     setAtCursorPosition(cursorPos);
     atCursorPositionRef.current = cursorPos;
-  }, [sessionMessages, elements]);
+  }, [sessionMessages, elements, buildAllMediaElements]);
+
+  // 处理粘贴事件：自动解析粘贴文本中的 @图片N / @视频N 标签并关联到对应的媒体元素
+  const handlePromptPaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // 获取粘贴的纯文本
+    const pastedText = e.clipboardData.getData('text/plain');
+    if (!pastedText) return;
+
+    // 检查粘贴内容中是否包含 @图片N 或 @视频N 标签
+    const tagPattern = /@(图片|视频)(\d+)/g;
+    const tags: Array<{ tag: string; type: 'image' | 'video'; index: number }> = [];
+    let match: RegExpExecArray | null;
+    while ((match = tagPattern.exec(pastedText)) !== null) {
+      tags.push({
+        tag: match[0],
+        type: match[1] === '图片' ? 'image' : 'video',
+        index: parseInt(match[2], 10)
+      });
+    }
+
+    if (tags.length === 0) return; // 没有 @ 标签，走默认粘贴
+
+    // 构建媒体元素列表
+    const allMediaElements = buildAllMediaElements();
+
+    // 将匹配到的标签自动添加到 atMentionedElements
+    const newMentions: Array<{type: 'image' | 'video', src: string, alt?: string, id: string, tag: string, tagIndex: number}> = [];
+    for (const t of tags) {
+      // 按 listIndex 匹配
+      const matched = allMediaElements.find(el => el.type === t.type && el.listIndex === t.index);
+      if (matched) {
+        newMentions.push({
+          type: matched.type,
+          src: matched.src,
+          alt: matched.alt,
+          id: matched.id,
+          tag: t.tag,
+          tagIndex: matched.listIndex
+        });
+      }
+    }
+
+    if (newMentions.length > 0) {
+      setAtMentionedElements(prev => {
+        const updated = [...prev];
+        for (const nm of newMentions) {
+          // 去重：同 tag 只保留最新的
+          const existIdx = updated.findIndex(e => e.tag === nm.tag);
+          if (existIdx >= 0) {
+            updated[existIdx] = nm;
+          } else {
+            updated.push(nm);
+          }
+        }
+        return updated;
+      });
+    }
+  }, [buildAllMediaElements]);
 
   // 选择@建议
   const selectAtSuggestion = useCallback((element: {type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}, currentPrompt: string, cursorPos: number): { newPrompt: string; newCursorPos: number } => {
@@ -1243,6 +1282,25 @@ const ImageEditorPage: React.FC = () => {
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [showModelDropdown]);
+
+  // 点击外部关闭视频参数下拉
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (videoParamsBarRef.current && !videoParamsBarRef.current.contains(e.target as Node)) {
+        setOpenVideoParamMenu(null);
+      }
+    };
+    if (openVideoParamMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [openVideoParamMenu]);
+
+  useEffect(() => {
+    if (generateMode !== 'video' || !isInputFocused) {
+      setOpenVideoParamMenu(null);
+    }
+  }, [generateMode, isInputFocused]);
 
   // 当图片取消选中时，关闭图生视频弹框
   useEffect(() => {
@@ -5393,7 +5451,10 @@ const ImageEditorPage: React.FC = () => {
             </div>
 
             {/* 主输入框 */}
-            <div className="bg-gray-800/60 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+            <div
+              ref={floatingPromptInputCardRef}
+              className="bg-gray-800/60 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]"
+            >
               {/* 显示选中的图片数量提示 */}
               {selectedElementIds.length > 0 && currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length > 0 && (
                 <div className="px-4 pt-3 pb-1">
@@ -5425,12 +5486,16 @@ const ImageEditorPage: React.FC = () => {
                   >
                     {prompt.split(/(@(?:图片|视频)\d+)/g).map((part, index) => {
                       if (part.startsWith('@') && (part.includes('图片') || part.includes('视频'))) {
+                        const isMentioned = atMentionedElements.some(m => m.tag === part);
                         return (
                           <span
                             key={index}
-                            className="text-blue-400 bg-blue-500/20 rounded cursor-pointer hover:bg-blue-500/40 transition-colors pointer-events-auto"
+                            className={isMentioned
+                              ? "text-blue-400 bg-blue-500/20 rounded cursor-pointer hover:bg-blue-500/40 transition-colors pointer-events-auto"
+                              : "text-zinc-400 rounded pointer-events-none"
+                            }
                             style={{ boxDecorationBreak: 'clone' }}
-                            onMouseDown={(e) => {
+                            onMouseDown={isMentioned ? (e) => {
                               e.preventDefault(); // 阻止textarea失焦，防止输入框缩进
                               e.stopPropagation();
                               // 从 atMentionedElements 中找到对应的元素
@@ -5447,7 +5512,7 @@ const ImageEditorPage: React.FC = () => {
                                   setTimeout(() => setHoveredElementId(null), 3000);
                                 }
                               }
-                            }}
+                            } : undefined}
                           >
                             {part}
                           </span>
@@ -5467,11 +5532,21 @@ const ImageEditorPage: React.FC = () => {
                       atCursorPositionRef.current = cursorPos;
                       handleAtInput(e.target.value, cursorPos);
                     }}
+                    onPaste={handlePromptPaste}
                     onFocus={() => setIsInputFocused(true)}
                     onBlur={() => {
-                      // 延迟隐藏建议，允许点击选择
-                      setTimeout(() => setShowAtSuggestions(false), 200);
-                      setIsInputFocused(false);
+                      setTimeout(() => {
+                        setShowAtSuggestions(false);
+                        const ae = document.activeElement;
+                        if (
+                          floatingPromptInputCardRef.current &&
+                          ae &&
+                          floatingPromptInputCardRef.current.contains(ae)
+                        ) {
+                          return;
+                        }
+                        setIsInputFocused(false);
+                      }, 200);
                     }}
                     onKeyDown={(e) => {
                       if (showAtSuggestions && atSuggestions.length > 0) {
@@ -5707,6 +5782,179 @@ const ImageEditorPage: React.FC = () => {
                   )}
                 </button>
               </div>
+
+              {/* 生视频：聚焦后在输入行下方，交互与顶部「模型选择」一致（按钮 + 自定义下拉） */}
+              {generateMode === 'video' && isInputFocused && (
+                <div
+                  ref={videoParamsBarRef}
+                  className="flex flex-wrap items-center gap-2 border-t border-white/10 px-3 pb-3 pt-2"
+                >
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setOpenVideoParamMenu((k) => (k === 'resolution' ? null : 'resolution'))}
+                      title="清晰度"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 backdrop-blur-2xl transition-colors hover:bg-black/40"
+                    >
+                      <Monitor className="h-4 w-4 shrink-0 text-white/60" strokeWidth={2} />
+                      <span className="max-w-[5rem] truncate text-sm font-medium text-white/90">{videoResolution}</span>
+                      <svg
+                        className={`h-4 w-4 shrink-0 text-white/60 transition-transform ${openVideoParamMenu === 'resolution' ? 'rotate-180' : ''}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    {openVideoParamMenu === 'resolution' && (
+                      <div className="absolute bottom-full left-0 z-[60] mb-2 w-56 overflow-hidden rounded-xl border border-white/10 bg-gray-900/95 shadow-2xl backdrop-blur-2xl">
+                        <div className="border-b border-white/10 p-2">
+                          <span className="px-2 text-xs text-white/50">选择分辨率</span>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto py-1">
+                          {(['480P', '720P', '1080P'] as const).map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setVideoResolution(r);
+                                setOpenVideoParamMenu(null);
+                              }}
+                              className={`flex w-full items-start gap-3 px-3 py-2.5 transition-colors hover:bg-white/10 ${videoResolution === r ? 'bg-blue-500/20' : ''}`}
+                            >
+                              <div
+                                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${videoResolution === r ? 'bg-blue-500' : 'bg-white/20'}`}
+                              />
+                              <div className="min-w-0 flex-1 text-left">
+                                <div className="truncate text-sm font-medium text-white/90">{r}</div>
+                              </div>
+                              {videoResolution === r && (
+                                <svg className="mt-1 h-4 w-4 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setOpenVideoParamMenu((k) => (k === 'ratio' ? null : 'ratio'))}
+                      title="画幅"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 backdrop-blur-2xl transition-colors hover:bg-black/40"
+                    >
+                      <RectangleHorizontal className="h-4 w-4 shrink-0 text-white/60" strokeWidth={2} />
+                      <span className="max-w-[5rem] truncate text-sm font-medium text-white/90">{videoRatio}</span>
+                      <svg
+                        className={`h-4 w-4 shrink-0 text-white/60 transition-transform ${openVideoParamMenu === 'ratio' ? 'rotate-180' : ''}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    {openVideoParamMenu === 'ratio' && (
+                      <div className="absolute bottom-full left-0 z-[60] mb-2 w-56 overflow-hidden rounded-xl border border-white/10 bg-gray-900/95 shadow-2xl backdrop-blur-2xl">
+                        <div className="border-b border-white/10 p-2">
+                          <span className="px-2 text-xs text-white/50">选择比例</span>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto py-1">
+                          {(['16:9', '9:16', '1:1'] as const).map((rt) => (
+                            <button
+                              key={rt}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setVideoRatio(rt);
+                                setOpenVideoParamMenu(null);
+                              }}
+                              className={`flex w-full items-start gap-3 px-3 py-2.5 transition-colors hover:bg-white/10 ${videoRatio === rt ? 'bg-blue-500/20' : ''}`}
+                            >
+                              <div
+                                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${videoRatio === rt ? 'bg-blue-500' : 'bg-white/20'}`}
+                              />
+                              <div className="min-w-0 flex-1 text-left">
+                                <div className="truncate text-sm font-medium text-white/90">{rt}</div>
+                              </div>
+                              {videoRatio === rt && (
+                                <svg className="mt-1 h-4 w-4 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setOpenVideoParamMenu((k) => (k === 'duration' ? null : 'duration'))}
+                      title="时长"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 backdrop-blur-2xl transition-colors hover:bg-black/40"
+                    >
+                      <Clock className="h-4 w-4 shrink-0 text-white/60" strokeWidth={2} />
+                      <span className="max-w-[4.5rem] truncate text-sm font-medium text-white/90">{videoDuration}s</span>
+                      <svg
+                        className={`h-4 w-4 shrink-0 text-white/60 transition-transform ${openVideoParamMenu === 'duration' ? 'rotate-180' : ''}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    {openVideoParamMenu === 'duration' && (
+                      <div className="absolute bottom-full left-0 z-[60] mb-2 w-56 overflow-hidden rounded-xl border border-white/10 bg-gray-900/95 shadow-2xl backdrop-blur-2xl">
+                        <div className="border-b border-white/10 p-2">
+                          <span className="px-2 text-xs text-white/50">选择时长</span>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto py-1">
+                          {[5, 8, 10, 15].map((sec) => (
+                            <button
+                              key={sec}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setVideoDuration(sec);
+                                setOpenVideoParamMenu(null);
+                              }}
+                              className={`flex w-full items-start gap-3 px-3 py-2.5 transition-colors hover:bg-white/10 ${videoDuration === sec ? 'bg-blue-500/20' : ''}`}
+                            >
+                              <div
+                                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${videoDuration === sec ? 'bg-blue-500' : 'bg-white/20'}`}
+                              />
+                              <div className="min-w-0 flex-1 text-left">
+                                <div className="truncate text-sm font-medium text-white/90">{sec}s</div>
+                              </div>
+                              {videoDuration === sec && (
+                                <svg className="mt-1 h-4 w-4 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M20 6L9 17l-5-5" />
+                                </svg>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -1429,27 +1429,72 @@ data: [DONE]`
           method: 'GET',
           endpoint: '/web/package/vip',
           title: currentLanguage === 'zh' ? '订阅套餐' : 'VIP Packages',
-          description: currentLanguage === 'zh' ? '获取所有可用的 VIP 订阅套餐' : 'Get available VIP subscription plans'
+          description: currentLanguage === 'zh' ? '获取所有可用的 VIP 订阅套餐' : 'Get available VIP subscription plans',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": [
+    {
+      "id": 1,
+      "name": "VIP套餐",
+      "price": 99
+    }
+  ]
+}`
         },
         {
           method: 'POST',
           endpoint: '/web/pay/wechat/create',
           title: currentLanguage === 'zh' ? '创建微信支付订单' : 'Create WeChat Order',
           description: currentLanguage === 'zh' ? '创建微信支付订单，返回支付二维码等信息' : 'Create a WeChat pay order, returns QR code info',
-          request: `{ "planId": 1 }`
+          request: `{
+  "planId": 1
+}`,
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "orderNo": "P20260401123456",
+    "qrCodeUrl": "weixin://wxpay/bizpayurl?pr=xxxxxx"
+  }
+}`
         },
         {
           method: 'POST',
           endpoint: '/web/pay/wechat/continue',
           title: currentLanguage === 'zh' ? '继续支付' : 'Continue Payment',
           description: currentLanguage === 'zh' ? '继续未完成的微信支付订单' : 'Continue an unfinished WeChat pay order',
-          request: `{ "orderNo": "string" }`
+          request: `{
+  "orderNo": "P20260401123456"
+}`,
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "orderNo": "P20260401123456",
+    "qrCodeUrl": "weixin://wxpay/bizpayurl?pr=xxxxxx"
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/pay/order/detail/{orderNo}',
           title: currentLanguage === 'zh' ? '订单详情' : 'Order Detail',
-          description: currentLanguage === 'zh' ? '根据订单号查询订单详情' : 'Query order details by order number'
+          description: currentLanguage === 'zh' ? '根据订单号查询订单详情' : 'Query order details by order number',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "orderNo": "P20260401123456",
+    "orderName": "VIP套餐",
+    "amount": 99,
+    "paymentStatus": 0,
+    "status": 0,
+    "payMethod": "wxpay",
+    "createTime": "2026-04-01 10:00:00",
+    "payTime": null
+  }
+}`
         },
         {
           method: 'GET',
@@ -1459,13 +1504,38 @@ data: [DONE]`
           params: [
             { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码' : 'Page number' },
             { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' }
-          ]
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "rows": [
+    {
+      "id": "1001",
+      "orderNo": "P20260401123456",
+      "orderName": "VIP套餐",
+      "amount": 99,
+      "status": 0,
+      "payMethod": "wxpay",
+      "createTime": "2026-04-01 10:00:00",
+      "payTime": null
+    }
+  ],
+  "total": 1
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/pay/me/balance-plan',
           title: currentLanguage === 'zh' ? '余额与套餐' : 'Balance & Plan',
-          description: currentLanguage === 'zh' ? '查询当前用户的余额和订阅套餐信息' : 'Get current user balance and subscription plan'
+          description: currentLanguage === 'zh' ? '查询当前用户的余额和订阅套餐信息' : 'Get current user balance and subscription plan',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "userBalance": 0,
+    "userPlan": "free"
+  }
+}`
         }
       ]
     },
@@ -1474,9 +1544,112 @@ data: [DONE]`
       endpoints: [
         {
           method: 'GET',
+          endpoint: '/web/agent/my',
+          title: currentLanguage === 'zh' ? '我的 Agent 列表' : 'My Agent List',
+          description: currentLanguage === 'zh' ? '获取当前登录用户创建的 Agent 列表' : 'Get the current user created Agent list',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 1001,
+        "name": "智能客服助手",
+        "description": "负责售前咨询与问题分流",
+        "nameEn": "customer-support-assistant",
+        "descriptionEn": "Handle presales consultation and triage",
+        "systemPromote": "你是专业的客服助手，请先识别用户意图，再给出简洁准确的回答。",
+        "categoryId": 1,
+        "status": 1,
+        "isFeatured": 0,
+        "usageCount": 23,
+        "creatorName": "当前用户",
+        "createTime": "2026-04-01 10:00:00"
+      }
+    ],
+    "total": 1
+  }
+}`
+        },
+        {
+          method: 'POST',
+          endpoint: '/web/agent/create',
+          title: currentLanguage === 'zh' ? '创建 Agent' : 'Create Agent',
+          description: currentLanguage === 'zh' ? '创建一个新的 Agent（用于设置页 Agent 管理）' : 'Create a new Agent (for Settings Agent management)',
+          request: `{
+  "name": "智能客服助手",
+  "description": "负责售前咨询与问题分流",
+  "systemRole": "负责售前咨询与问题分流",
+  "systemPrompt": "你是专业的客服助手，请先识别用户意图，再给出简洁准确的回答。",
+  "categoryId": 1,
+  "nameEn": "customer-support-assistant",
+  "descriptionEn": "Handle presales consultation and triage"
+}`,
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": null
+}`
+        },
+        {
+          method: 'PUT',
+          endpoint: '/web/agent/update/{id}',
+          title: currentLanguage === 'zh' ? '更新 Agent' : 'Update Agent',
+          description: currentLanguage === 'zh' ? '更新指定 Agent 配置' : 'Update the specified Agent configuration',
+          request: `{
+  "id": 1001,
+  "name": "智能客服助手",
+  "description": "负责售前咨询与问题分流",
+  "systemRole": "负责售前咨询与问题分流",
+  "systemPrompt": "你是专业的客服助手，请先识别用户意图，再给出简洁准确的回答。",
+  "categoryId": 1,
+  "nameEn": "customer-support-assistant",
+  "descriptionEn": "Handle presales consultation and triage"
+}`,
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": null
+}`
+        },
+        {
+          method: 'DELETE',
+          endpoint: '/web/agent/my/{id}',
+          title: currentLanguage === 'zh' ? '删除我的 Agent' : 'Delete My Agent',
+          description: currentLanguage === 'zh' ? '删除当前用户创建的 Agent' : 'Delete an Agent created by current user',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": null
+}`
+        },
+        {
+          method: 'GET',
           endpoint: '/web/agent/categories',
           title: currentLanguage === 'zh' ? 'Agent 分类' : 'Agent Categories',
-          description: currentLanguage === 'zh' ? '获取 Agent 分类列表' : 'Get Agent category list'
+          description: currentLanguage === 'zh' ? '获取 Agent 分类列表' : 'Get Agent category list',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "categories": [
+      {
+        "createDept": null,
+        "createBy": null,
+        "createTime": null,
+        "updateBy": null,
+        "updateTime": null,
+        "id": 13,
+        "name": "编程",
+        "nameEn": "programming",
+        "sortOrder": null,
+        "status": 1,
+        "agentCount": 106
+      }
+    ],
+    "total": 14
+  }
+}`
         },
         {
           method: 'GET',
@@ -1488,13 +1661,57 @@ data: [DONE]`
             { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量' : 'Page size' },
             { name: 'categoryId', type: 'number', description: currentLanguage === 'zh' ? '分类ID（可选）' : 'Category ID (optional)' },
             { name: 'status', type: 'number', description: currentLanguage === 'zh' ? '状态，默认 1' : 'Status, default 1' }
-          ]
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 101,
+        "name": "前端开发助手",
+        "description": "回答前端工程问题并给出代码建议",
+        "nameEn": "frontend-assistant",
+        "descriptionEn": "Help with frontend engineering",
+        "systemPromote": "你是高级前端开发助手，输出准确、可执行的方案。",
+        "categoryId": 13,
+        "status": 1,
+        "isFeatured": 0,
+        "usageCount": 256,
+        "creatorName": "admin",
+        "createTime": "2026-04-01 10:00:00"
+      }
+    ],
+    "total": 1
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/agent/detail/{id}',
           title: currentLanguage === 'zh' ? 'Agent 详情' : 'Agent Detail',
-          description: currentLanguage === 'zh' ? '获取指定 Agent 的详细信息' : 'Get details of a specific Agent'
+          description: currentLanguage === 'zh' ? '获取指定 Agent 的详细信息' : 'Get details of a specific Agent',
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "id": 101,
+    "name": "前端开发助手",
+    "description": "回答前端工程问题并给出代码建议",
+    "nameEn": "frontend-assistant",
+    "descriptionEn": "Help with frontend engineering",
+    "systemPromote": "你是高级前端开发助手，输出准确、可执行的方案。",
+    "categoryId": 13,
+    "categoryName": "编程",
+    "status": 1,
+    "isFeatured": 0,
+    "usageCount": 256,
+    "creatorId": 10001,
+    "creatorName": "admin",
+    "createTime": "2026-04-01 10:00:00",
+    "updateTime": "2026-04-01 10:00:00"
+  }
+}`
         },
         {
           method: 'GET',
@@ -1502,32 +1719,128 @@ data: [DONE]`
           title: currentLanguage === 'zh' ? '搜索 Agent' : 'Search Agents',
           description: currentLanguage === 'zh' ? '按关键词搜索 Agent' : 'Search Agents by keyword',
           params: [
-            { name: 'key', type: 'string', description: currentLanguage === 'zh' ? '搜索关键词' : 'Search keyword' }
-          ]
+            { name: 'key', type: 'string', description: currentLanguage === 'zh' ? '搜索关键词' : 'Search keyword' },
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码（默认 1）' : 'Page number (default 1)' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量（默认 20）' : 'Page size (default 20)' },
+            { name: 'categoryId', type: 'number', description: currentLanguage === 'zh' ? '分类ID（可选）' : 'Category ID (optional)' }
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 101,
+        "name": "前端开发助手",
+        "description": "回答前端工程问题并给出代码建议",
+        "nameEn": "frontend-assistant",
+        "descriptionEn": "Help with frontend engineering",
+        "systemPromote": "你是高级前端开发助手，输出准确、可执行的方案。",
+        "categoryId": 13,
+        "status": 1,
+        "isFeatured": 0,
+        "usageCount": 256,
+        "creatorName": "admin",
+        "createTime": "2026-04-01 10:00:00"
+      }
+    ],
+    "total": 1
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/agent/featured',
           title: currentLanguage === 'zh' ? '精选 Agent' : 'Featured Agents',
-          description: currentLanguage === 'zh' ? '获取精选推荐的 Agent 列表' : 'Get featured/recommended Agents'
+          description: currentLanguage === 'zh' ? '获取精选推荐的 Agent 列表' : 'Get featured/recommended Agents',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码（默认 1）' : 'Page number (default 1)' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量（默认 20）' : 'Page size (default 20)' }
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 101,
+        "name": "前端开发助手",
+        "description": "回答前端工程问题并给出代码建议",
+        "isFeatured": 1,
+        "categoryId": 13,
+        "usageCount": 256
+      }
+    ],
+    "total": 1
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/agent/recent',
           title: currentLanguage === 'zh' ? '最近发布' : 'Recent Agents',
-          description: currentLanguage === 'zh' ? '获取最近发布的 Agent 列表' : 'Get recently published Agents'
+          description: currentLanguage === 'zh' ? '获取最近发布的 Agent 列表' : 'Get recently published Agents',
+          params: [
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码（默认 1）' : 'Page number (default 1)' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量（默认 10）' : 'Page size (default 10)' }
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 101,
+        "name": "前端开发助手",
+        "description": "回答前端工程问题并给出代码建议",
+        "categoryId": 13,
+        "createTime": "2026-04-01 10:00:00"
+      }
+    ],
+    "total": 1
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/agent/category/{categoryId}',
           title: currentLanguage === 'zh' ? '按分类获取 Agent' : 'Agents by Category',
-          description: currentLanguage === 'zh' ? '获取指定分类下的 Agent 列表' : 'Get Agents under a specific category'
+          description: currentLanguage === 'zh' ? '获取指定分类下的 Agent 列表' : 'Get Agents under a specific category',
+          params: [
+            { name: 'categoryId', type: 'number', description: currentLanguage === 'zh' ? '路径参数：分类ID' : 'Path param: category ID' },
+            { name: 'pageNum', type: 'number', description: currentLanguage === 'zh' ? '页码（默认 1）' : 'Page number (default 1)' },
+            { name: 'pageSize', type: 'number', description: currentLanguage === 'zh' ? '每页数量（默认 20）' : 'Page size (default 20)' }
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "rows": [
+      {
+        "id": 101,
+        "name": "前端开发助手",
+        "description": "回答前端工程问题并给出代码建议",
+        "categoryId": 13,
+        "status": 1
+      }
+    ],
+    "total": 1
+  }
+}`
         },
         {
           method: 'GET',
           endpoint: '/web/agent/activity/{id}',
           title: currentLanguage === 'zh' ? '记录使用活动' : 'Track Activity',
-          description: currentLanguage === 'zh' ? '记录 Agent 使用活动（用于统计）' : 'Record Agent usage activity (for analytics)'
+          description: currentLanguage === 'zh' ? '记录 Agent 使用活动（用于统计）' : 'Record Agent usage activity (for analytics)',
+          params: [
+            { name: 'id', type: 'string', description: currentLanguage === 'zh' ? '路径参数：Agent ID' : 'Path param: Agent ID' }
+          ],
+          response: `{
+  "code": 200,
+  "msg": "操作成功",
+  "data": null
+}`
         }
       ]
     }

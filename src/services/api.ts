@@ -794,6 +794,55 @@ export const api = {
         console.error('根据分类获取Agent失败:', error);
         throw error;
       }
+    },
+
+    /** 我的 Agent 列表（登录；服务端再按所有权过滤） */
+    getMyList: async () => {
+      try {
+        const response = await apiClient.get<ApiResponse<any>>('/web/agent/my');
+        return response.data;
+      } catch (error) {
+        console.error('获取我的Agent列表失败:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 创建 Agent（登录；author 等由服务端写入）
+     * 请求体字段名 systemPrompt 可由后端 @JsonAlias 映射到 systemPromote
+     */
+    createMy: async (body: Record<string, unknown>) => {
+      try {
+        const response = await apiClient.post<ApiResponse<any>>('/web/agent/create', body);
+        return response.data;
+      } catch (error) {
+        console.error('创建Agent失败:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 更新 Agent（登录 + 所有权；路径 id 与 body.id 须一致）
+     */
+    updateMy: async (id: string | number, body: Record<string, unknown>) => {
+      try {
+        const response = await apiClient.put<ApiResponse<any>>(`/web/agent/update/${id}`, body);
+        return response.data;
+      } catch (error) {
+        console.error('更新Agent失败:', error);
+        throw error;
+      }
+    },
+
+    /** 删除我的 Agent（登录 + 所有权） */
+    deleteMy: async (id: string | number) => {
+      try {
+        const response = await apiClient.delete<ApiResponse<any>>(`/web/agent/my/${id}`);
+        return response.data;
+      } catch (error) {
+        console.error('删除Agent失败:', error);
+        throw error;
+      }
     }
   },
 
