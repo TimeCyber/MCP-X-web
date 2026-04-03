@@ -426,7 +426,8 @@ const ImageEditorPage: React.FC = () => {
         ...board,
         elements: board.elements.map(el => ({
           ...el,
-          image: undefined // 排除 Image 对象，无法序列化
+          image: undefined, // 排除 Image 对象，无法序列化
+          video: undefined  // 排除 Video 对象，无法序列化
         }))
       }));
       localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serializedBoards));
@@ -596,14 +597,14 @@ const ImageEditorPage: React.FC = () => {
           try {
             // 创建视频元素
             const video = document.createElement('video');
-            video.preload = 'metadata';
-            video.muted = false;
+            video.preload = 'auto';
+            video.muted = true;
             video.playsInline = true;
 
-            // 等待视频元数据加载完成以获取尺寸，加载失败时用默认尺寸
+            // 等待视频数据加载完成以获取尺寸和封面帧，加载失败时用默认尺寸
             await new Promise<void>((resolve) => {
               const timer = setTimeout(() => resolve(), 5000); // 5s 超时
-              video.onloadedmetadata = () => {
+              video.onloadeddata = () => {
                 video.currentTime = 0.1; // 跳到第一帧
               };
               video.onseeked = () => { clearTimeout(timer); resolve(); };
@@ -1830,19 +1831,28 @@ const ImageEditorPage: React.FC = () => {
             return new Promise<Element>((resolve) => {
               const video = document.createElement('video');
               video.crossOrigin = 'anonymous';
-              video.preload = 'metadata';
-              video.muted = false;
+              video.preload = 'auto';
+              video.muted = true;
               video.playsInline = true;
               
-              video.onloadedmetadata = () => {
+              // 超时保护：5秒后如果还没加载完成，直接返回元素（无封面）
+              const timer = setTimeout(() => {
+                console.warn('视频封面加载超时:', videoEl.videoUrl?.substring(0, 80));
+                resolve({ ...videoEl, video: video, isPlaying: false });
+              }, 5000);
+
+              video.onseeked = () => {
+                clearTimeout(timer);
+                resolve({ ...videoEl, video: video, isPlaying: false });
+              };
+
+              video.onloadeddata = () => {
+                // loadeddata 表示有足够数据渲染第一帧，此时 seek 到 0.1s
                 video.currentTime = 0.1;
               };
               
-              video.onseeked = () => {
-                resolve({ ...videoEl, video: video, isPlaying: false });
-              };
-              
               video.onerror = () => {
+                clearTimeout(timer);
                 // 即使加载失败也返回元素
                 resolve(videoEl);
               };
@@ -1943,14 +1953,19 @@ const ImageEditorPage: React.FC = () => {
             if (loadedBoards.length > 0) {
               setBoards(loadedBoards);
               saveBoardsToCache(loadedBoards);
-              // 如果当前 board elements 为空，但同步后有数据，立即更新画布
+              // 仅当当前画布为空时才用服务端数据覆盖，避免覆盖已加载的视频封面等运行时对象
               const currentBoardIdSnap = loadCurrentBoardIdFromCache();
               const reloadedCurrent = loadedBoards.find(b => b.id === currentBoardIdSnap || b.sessionId === currentBoardIdSnap);
               if (reloadedCurrent && reloadedCurrent.elements.length > 0) {
-                setCurrentBoardId(reloadedCurrent.id);
-                setCurrentSessionId(reloadedCurrent.sessionId);
-                setElements([...reloadedCurrent.elements]);
-                console.log('✅ 当前画板已从服务端更新，元素数:', reloadedCurrent.elements.length);
+                setElements(prev => {
+                  // 如果当前画布已有元素（从缓存恢复的），不覆盖
+                  if (prev.length > 0) {
+                    console.log('✅ 当前画布已有元素，跳过服务端覆盖');
+                    return prev;
+                  }
+                  console.log('✅ 当前画布为空，使用服务端数据，元素数:', reloadedCurrent.elements.length);
+                  return [...reloadedCurrent.elements];
+                });
               }
               console.log('✅ 服务端数据同步完成');
             }
