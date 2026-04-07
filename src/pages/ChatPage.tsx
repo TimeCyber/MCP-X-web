@@ -1075,7 +1075,7 @@ const ChatPageContent: React.FC = React.memo(() => {
           {
             messages: [...historyMessages, { role: 'user', content: messageContent }],
             sessionId: currentSessionId!,
-            userId: parseInt(currentUserId),
+            userId: currentUserId,
             stream: true,
             isMcp: isMcpEnabled,
             mcpConfig: isMcpEnabled ? mcpConfigMap : undefined,
@@ -1264,7 +1264,7 @@ const ChatPageContent: React.FC = React.memo(() => {
           {
             messages: [...historyMessages, { role: 'user', content: messageContent }],
             sessionId: currentSessionId!,
-            userId: parseInt(currentUserId),
+            userId: currentUserId,
             stream: true,
             isMcp: isMcpEnabled,
             mcpConfig: isMcpEnabled ? mcpConfigMap : undefined,

@@ -73,7 +73,7 @@ export interface SendDTO {
   sessionId?: string;
   stream?: boolean;
   sysPrompt?: string;
-  userId?: number;
+  userId?: string;
   usingContext?: boolean;
   role?: string;
   uuid?: number;

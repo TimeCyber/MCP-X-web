@@ -653,7 +653,7 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
       endpoints: [
         {
           method: 'POST',
-          endpoint: '/web/session',
+          endpoint: '/system/session',
           title: currentLanguage === 'zh' ? '新建会话（登录用户）' : 'Create Session (Auth)',
           description: currentLanguage === 'zh' ? '创建一个新的 Session，返回 sessionId 供后续接口使用' : 'Create a new session and return a sessionId for subsequent API calls.',
           request: `{
@@ -671,7 +671,7 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
 
         {
           method: 'GET',
-          endpoint: '/web/session/list',
+          endpoint: '/system/session/list',
           title: currentLanguage === 'zh' ? '会话列表（登录用户）' : 'Session List (Auth)',
           description: currentLanguage === 'zh'
             ? '获取当前用户的会话列表，可按 appId 过滤，isDelete=0 只返回未删除的会话。'
@@ -699,7 +699,7 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
 
         {
           method: 'GET',
-          endpoint: '/web/message/list',
+          endpoint: '/system/message/list',
           title: currentLanguage === 'zh' ? '获取聊天记录（登录用户）' : 'Get Messages (Auth)',
           description: currentLanguage === 'zh' ? '获取指定 Session 下的全部聊天记录，按时间升序返回' : 'Fetch all messages for a given session, ordered by time ascending.',
           params: [
@@ -727,33 +727,9 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
   ]
 }`
         },
-
-        {
-          method: 'PUT',
-          endpoint: '/web/session',
-          title: currentLanguage === 'zh' ? '更新会话' : 'Update Session',
-          description: currentLanguage === 'zh' ? '更新会话标题或备注' : 'Update session title or remark',
-          request: `{
-  "id": "string",            // 会话ID（id 或 sessionId 二选一）
-  "sessionId": "string",     // 同上
-  "sessionTitle": "string",  // 可选
-  "remark": "string"         // 可选
-}`
-        },
-        {
-          method: 'PUT',
-          endpoint: '/web/session/content',
-          title: currentLanguage === 'zh' ? '更新会话内容' : 'Update Session Content',
-          description: currentLanguage === 'zh' ? '保存会话内容（如视频项目 JSON），用于持久化工作区状态' : 'Save session content (e.g. video project JSON) for workspace persistence',
-          request: `{
-  "id": "string",           // sessionId
-  "content": "string",      // 内容（JSON字符串等）
-  "sessionTitle": "string"  // 可选
-}`
-        },
         {
           method: 'GET',
-          endpoint: '/web/session/content/list/{sessionId}',
+          endpoint: '/system/session/content/list/{sessionId}',
           title: currentLanguage === 'zh' ? '会话内容历史' : 'Session Content History',
           description: currentLanguage === 'zh' ? '获取会话内容的历史版本列表（如视频项目的历史快照）' : 'Get history of session content versions (e.g. video project snapshots)',
           response: `{

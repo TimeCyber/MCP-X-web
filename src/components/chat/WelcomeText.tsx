@@ -22,10 +22,10 @@ export const WelcomeText: React.FC<WelcomeTextProps> = ({ onSuggestionClick }) =
     description: '我是您的智能AI助手，可以帮助您解答问题、分析数据、编写代码等。请告诉我您需要什么帮助？',
     avatar: <Sparkles size={32} className="text-white" />,
     suggestions: [
-      '帮我写一个React组件',
-      '解释一下什么是MCP',
-      '如何优化网站性能',
-      '分析这段代码的问题'
+      'MCP-X能做什么？',
+      'MCP-X能帮我做什么？',
+      'MCP-X的架构是什么？',
+      '有多少用户在使用MCP-X?'
     ]
   };
 
