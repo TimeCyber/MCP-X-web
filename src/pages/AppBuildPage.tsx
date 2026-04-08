@@ -1027,26 +1027,40 @@ export const AppBuildPage: React.FC = () => {
         </div>
 
         {/* 右侧预览区域 */}
-        <div className="flex-1 relative">
-          <CodePreview
-            previewUrl={effectivePreviewUrl}
-            isGenerating={isGenerating}
-            isEditMode={isEditMode}
-            selectedElementInfo={selectedElementInfo}
-            onToggleEditMode={toggleEditMode}
-            onClearSelection={clearSelectedElement}
-            onElementSelected={handleElementSelected}
-            onDownloadCode={handleDownload}
-            onSaveCode={handleSaveCode}
-            isOwner={isOwner}
-            appId={appId || ''}
-            codeGenType={appInfo?.codeGenType}
-          />
-          {isGenerating && (
-            <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center">
-              <div className="w-full max-w-2xl px-4"> {/* DinoGame */}
-                {activeMiniGame === 'dino' ? <DinoGame /> : <DinoGame />}
+        <div className="flex-1 relative flex flex-col">
+          <div className="flex-1 relative">
+            <CodePreview
+              previewUrl={effectivePreviewUrl}
+              isGenerating={isGenerating}
+              isEditMode={isEditMode}
+              selectedElementInfo={selectedElementInfo}
+              onToggleEditMode={toggleEditMode}
+              onClearSelection={clearSelectedElement}
+              onElementSelected={handleElementSelected}
+              onDownloadCode={handleDownload}
+              onSaveCode={handleSaveCode}
+              isOwner={isOwner}
+              appId={appId || ''}
+              codeGenType={appInfo?.codeGenType}
+            />
+            {isGenerating && (
+              <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center">
+                <div className="w-full max-w-2xl px-4"> {/* DinoGame */}
+                  {activeMiniGame === 'dino' ? <DinoGame /> : <DinoGame />}
+                </div>
               </div>
+            )}
+          </div>
+          {/* 预览区域底部错误日志 */}
+          {devErrorLogs && (
+            <div className="border-t border-red-200 bg-red-50 p-3 max-h-40 overflow-y-auto">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-red-700 flex items-center gap-1">
+                  <span>⚠️</span> Dev Server 错误日志
+                </span>
+                <button onClick={() => setDevErrorLogs('')} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+              </div>
+              <pre className="text-xs text-red-600 whitespace-pre-wrap break-words font-mono">{devErrorLogs}</pre>
             </div>
           )}
         </div>
