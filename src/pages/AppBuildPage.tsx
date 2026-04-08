@@ -1096,7 +1096,7 @@ export const AppBuildPage: React.FC = () => {
             <p className="text-slate-600 mb-6">{vipModalMsg || '此功能仅限VIP用户使用，请先升级套餐。'}</p>
             <div className="flex gap-3">
               <button
-                onClick={() => { setShowVipModal(false); navigate('/pricing'); }}
+                onClick={() => { setShowVipModal(false); window.open('/pricing', '_blank'); }}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm"
               >
                 去升级
