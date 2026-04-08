@@ -696,7 +696,6 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
   ]
 }`
         },
-
         {
           method: 'GET',
           endpoint: '/system/message/list',
@@ -723,24 +722,6 @@ const APISection: React.FC<{ currentLanguage: string }> = ({ currentLanguage }) 
       "files": [
         { "uid": "string", "name": "file.pdf", "type": "application/pdf", "size": 102400, "url": "string" }
       ]
-    }
-  ]
-}`
-        },
-        {
-          method: 'GET',
-          endpoint: '/system/session/content/list/{sessionId}',
-          title: currentLanguage === 'zh' ? '会话内容历史' : 'Session Content History',
-          description: currentLanguage === 'zh' ? '获取会话内容的历史版本列表（如视频项目的历史快照）' : 'Get history of session content versions (e.g. video project snapshots)',
-          response: `{
-  "code": 200,
-  "rows": [
-    {
-      "id": "string",
-      "sessionId": "string",
-      "content": "string",        // 保存的内容（JSON字符串等）
-      "sessionTitle": "string",
-      "createTime": "string"
     }
   ]
 }`

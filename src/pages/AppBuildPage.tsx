@@ -108,6 +108,10 @@ export const AppBuildPage: React.FC = () => {
   // 下载状态（暂不使用，但保留逻辑可随时恢复）
   // const [downloading, setDownloading] = useState(false);
   
+  // VIP升级弹窗
+  const [showVipModal, setShowVipModal] = useState(false);
+  const [vipModalMsg, setVipModalMsg] = useState('');
+  
   // 编辑模式状态
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedElementInfo, setSelectedElementInfo] = useState<ElementInfo | null>(null);
@@ -639,9 +643,16 @@ export const AppBuildPage: React.FC = () => {
       link.click();
       URL.revokeObjectURL(downloadUrl);
       toast.success(currentLanguage === 'zh' ? '代码下载成功' : 'Code downloaded');
-    } catch (error) {
+    } catch (error: any) {
       console.error(currentLanguage === 'zh' ? '下载失败:' : 'Download failed:', error);
-      toast.error(currentLanguage === 'zh' ? '下载失败，请重试' : 'Download failed, please retry');
+      const msg = error?.serverMsg || error?.message || '';
+      // VIP 相关错误，弹窗引导充值
+      if (msg.includes('VIP') || msg.includes('升级') || msg.includes('套餐')) {
+        setVipModalMsg(msg);
+        setShowVipModal(true);
+      } else {
+        toast.error(msg || (currentLanguage === 'zh' ? '下载失败，请重试' : 'Download failed, please retry'));
+      }
     }
   };
 
@@ -1071,6 +1082,30 @@ export const AppBuildPage: React.FC = () => {
                 className="px-4 py-2 text-slate-600 hover:text-blue-600 transition-colors"
               >
                 关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIP升级弹窗 */}
+      {showVipModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">🔒 需要升级套餐</h3>
+            <p className="text-slate-600 mb-6">{vipModalMsg || '此功能仅限VIP用户使用，请先升级套餐。'}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowVipModal(false); navigate('/pricing'); }}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm"
+              >
+                去升级
+              </button>
+              <button
+                onClick={() => setShowVipModal(false)}
+                className="px-4 py-2 text-slate-600 hover:text-blue-600 transition-colors"
+              >
+                取消
               </button>
             </div>
           </div>

@@ -444,6 +444,16 @@ export const downloadAppCode = async (appId: string) => {
   const response = await apiClient.get(`/app/webgen/download/${appId}`, {
     responseType: 'blob',
   });
+  // 如果后端返回 JSON 错误（content-type 为 application/json），解析并抛出
+  const contentType = response.headers['content-type'] || '';
+  if (contentType.includes('application/json')) {
+    const text = await (response.data as Blob).text();
+    const json = JSON.parse(text);
+    const err: any = new Error(json.msg || '下载失败');
+    err.code = json.code;
+    err.serverMsg = json.msg;
+    throw err;
+  }
   return response;
 };
 
