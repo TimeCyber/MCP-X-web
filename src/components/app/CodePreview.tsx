@@ -26,6 +26,8 @@ interface CodePreviewProps {
   className?: string;
   appId?: string;
   codeGenType?: string;
+  logs?: Array<{ time: string; level: string; message: string }>;
+  onClearLogs?: () => void;
 }
 
 export const CodePreview: React.FC<CodePreviewProps> = ({
@@ -42,11 +44,13 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   className = '',
   appId,
   codeGenType,
+  logs = [],
+  onClearLogs,
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isSrcdocInjectedRef = useRef(false); // 防止跨域 srcdoc 注入后重复处理
   const [previewReady, setPreviewReady] = useState(false);
-  const [activeTab, setActiveTab] = useState<'preview' | 'code'>('preview');
+  const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'logs'>('preview');
   const [codeText, setCodeText] = useState('');
   const [loadingCode, setLoadingCode] = useState(false);
   const [codeError, setCodeError] = useState('');
@@ -76,6 +80,25 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   const EDITOR_SCRIPT_CONTENT = `(function() {
   if (window.__mcpxEditorInjected) return;
   window.__mcpxEditorInjected = true;
+  // 拦截 console.error 和 console.warn，转发给父窗口
+  try {
+    var _origError = console.error;
+    var _origWarn = console.warn;
+    console.error = function() {
+      _origError.apply(console, arguments);
+      try { window.parent.postMessage({ type: 'console_error', message: Array.prototype.slice.call(arguments).map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' ') }, '*'); } catch(e) {}
+    };
+    console.warn = function() {
+      _origWarn.apply(console, arguments);
+      try { window.parent.postMessage({ type: 'console_warn', message: Array.prototype.slice.call(arguments).map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' ') }, '*'); } catch(e) {}
+    };
+    window.addEventListener('error', function(ev) {
+      try { window.parent.postMessage({ type: 'console_error', message: ev.message + (ev.filename ? ' (' + ev.filename + ':' + ev.lineno + ')' : '') }, '*'); } catch(e) {}
+    });
+    window.addEventListener('unhandledrejection', function(ev) {
+      try { window.parent.postMessage({ type: 'console_error', message: 'Unhandled Promise: ' + (ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)) }, '*'); } catch(e) {}
+    });
+  } catch(e) {}
   var isEditModeActive = false;
   var overlay = null;
   var mouseMoveHandler = null;
@@ -485,6 +508,21 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
           >
             源代码
           </button>
+          <button
+            onClick={() => setActiveTab('logs')}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors relative ${
+              activeTab === 'logs'
+                ? 'bg-white text-slate-900 border border-slate-200'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            日志
+            {logs.length > 0 && activeTab !== 'logs' && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {logs.length > 99 ? '99' : logs.length}
+              </span>
+            )}
+          </button>
         </div>
         <div className="flex items-center gap-2">
           {previewUrl && (
@@ -729,6 +767,53 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+        {activeTab === 'logs' && (
+          <div className="w-full h-full flex flex-col bg-slate-900 text-slate-200">
+            {/* 日志工具栏 */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-800 shrink-0">
+              <span className="text-xs text-slate-400">控制台日志 ({logs.length})</span>
+              {logs.length > 0 && onClearLogs && (
+                <button
+                  onClick={onClearLogs}
+                  className="px-2 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+            {/* 日志内容 */}
+            <div className="flex-1 overflow-auto p-2 font-mono text-xs">
+              {logs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                  <div className="text-3xl mb-3">📋</div>
+                  <p className="text-sm">暂无日志</p>
+                  <p className="text-xs mt-1 text-slate-600">网页运行时的错误和警告会显示在这里</p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {logs.map((log, i) => (
+                    <div
+                      key={i}
+                      className={`flex items-start gap-2 px-2 py-1 rounded ${
+                        log.level === 'error' ? 'bg-red-900/30 text-red-300' :
+                        log.level === 'warn' ? 'bg-yellow-900/20 text-yellow-300' :
+                        'text-slate-300'
+                      }`}
+                    >
+                      <span className="shrink-0 text-slate-500 select-none">{log.time}</span>
+                      <span className={`shrink-0 w-12 text-center rounded text-[10px] font-bold uppercase ${
+                        log.level === 'error' ? 'text-red-400' :
+                        log.level === 'warn' ? 'text-yellow-400' :
+                        'text-blue-400'
+                      }`}>{log.level}</span>
+                      <span className="whitespace-pre-wrap break-all">{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
