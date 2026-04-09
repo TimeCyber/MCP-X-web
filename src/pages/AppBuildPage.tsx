@@ -100,8 +100,9 @@ export const AppBuildPage: React.FC = () => {
   // dev server 启动错误日志（非空时展示报错提示卡片）
   const [devErrorLogs, setDevErrorLogs] = useState<string>('');
   
-  // 控制台日志（从 iframe 捕获的错误/警告）
+  // 控制台日志（从后端接口获取的 dev server 日志）
   const [consoleLogs, setConsoleLogs] = useState<Array<{ time: string; level: string; message: string }>>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   // 部署状态
   const [deploying, setDeploying] = useState(false);
   const [deployUrl, setDeployUrl] = useState('');
@@ -194,41 +195,51 @@ export const AppBuildPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [previewUrl]);
 
-  // 监听 iframe 发送的控制台错误/警告消息
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'console_error' || event.data?.type === 'console_warn') {
-        const now = new Date();
-        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-        setConsoleLogs(prev => [...prev.slice(-499), {
-          time,
-          level: event.data.type === 'console_error' ? 'error' : 'warn',
-          message: event.data.message || String(event.data.data || '')
-        }]);
+  // 从后端接口获取 dev server 日志
+  const fetchDevServerLogs = useCallback(async (errorsOnly = false) => {
+    if (!appId) return;
+    setLogsLoading(true);
+    try {
+      const apiBase = config.apiBaseUrl.replace(/\/$/, '');
+      const res = await fetch(
+        `${apiBase}/app/webgen/chat/dev-server/logs?appId=${appId}&errorsOnly=${errorsOnly}`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } }
+      );
+      const json = await res.json();
+      if (json.code === 200 && json.data) {
+        const rawLogs: string = json.data.logs || '';
+        if (rawLogs.trim()) {
+          // 按行解析日志，每行作为一条记录
+          const lines = rawLogs.split('\n').filter((l: string) => l.trim());
+          const parsed = lines.map((line: string) => {
+            // 尝试提取时间戳，如 [2025-04-09 10:30:15] ERROR: xxx
+            const timeMatch = line.match(/^\[?(\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2})\]?\s*/);
+            const time = timeMatch ? timeMatch[1].replace('T', ' ') : new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            const rest = timeMatch ? line.substring(timeMatch[0].length) : line;
+            // 判断级别
+            let level = 'info';
+            if (/error|ERR|Error|failed|Failed|FAILED|exception|Exception/i.test(rest)) {
+              level = 'error';
+            } else if (/warn|WARN|Warning|warning/i.test(rest)) {
+              level = 'warn';
+            }
+            return { time, level, message: rest };
+          });
+          setConsoleLogs(parsed);
+        } else {
+          setConsoleLogs([]);
+        }
+        // 同步更新 devErrorLogs（错误提示卡片）
+        if (json.data.hasErrors) {
+          setDevErrorLogs(json.data.logs || '存在未知错误');
+        }
       }
-    };
-
-    // 监听全局未捕获错误（来自 iframe 的跨域脚本错误）
-    const handleError = (event: ErrorEvent) => {
-      // 只捕获来自 iframe 的错误（排除主页面自身的错误）
-      if (event.filename && !event.filename.includes(window.location.origin)) {
-        const now = new Date();
-        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-        setConsoleLogs(prev => [...prev.slice(-499), {
-          time,
-          level: 'error',
-          message: `${event.message} (${event.filename}:${event.lineno})`
-        }]);
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    window.addEventListener('error', handleError);
-    return () => {
-      window.removeEventListener('message', handleMessage);
-      window.removeEventListener('error', handleError);
-    };
-  }, []);
+    } catch {
+      // 网络失败时忽略
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [appId]);
 
   // 传递给 CodePreview 的实际URL，带上变化参数触发 iframe 刷新
   // 优先使用后端 dev server 代理路径构造预览地址，携带 token 鉴权
@@ -1082,6 +1093,8 @@ export const AppBuildPage: React.FC = () => {
               codeGenType={appInfo?.codeGenType}
               logs={consoleLogs}
               onClearLogs={() => setConsoleLogs([])}
+              logsLoading={logsLoading}
+              onRefreshLogs={() => fetchDevServerLogs(false)}
             />
             {isGenerating && (
               <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center">

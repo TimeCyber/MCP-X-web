@@ -28,6 +28,8 @@ interface CodePreviewProps {
   codeGenType?: string;
   logs?: Array<{ time: string; level: string; message: string }>;
   onClearLogs?: () => void;
+  logsLoading?: boolean;
+  onRefreshLogs?: () => void;
 }
 
 export const CodePreview: React.FC<CodePreviewProps> = ({
@@ -46,6 +48,8 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   codeGenType,
   logs = [],
   onClearLogs,
+  logsLoading = false,
+  onRefreshLogs,
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isSrcdocInjectedRef = useRef(false); // 防止跨域 srcdoc 注入后重复处理
@@ -359,6 +363,13 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       fetchCode();
     }
   }, [activeTab, previewUrl, appId, codeGenType]);
+
+  // 切换到日志 Tab 时自动获取日志
+  useEffect(() => {
+    if (activeTab === 'logs' && onRefreshLogs) {
+      onRefreshLogs();
+    }
+  }, [activeTab]);
 
   // 预留的辅助：如需退化到解析HTML资源，可恢复使用
   // const extractAssetPathsFromHtml = (html: string): string[] => { ... };
@@ -774,23 +785,47 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
           <div className="w-full h-full flex flex-col bg-slate-900 text-slate-200">
             {/* 日志工具栏 */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-800 shrink-0">
-              <span className="text-xs text-slate-400">控制台日志 ({logs.length})</span>
-              {logs.length > 0 && onClearLogs && (
-                <button
-                  onClick={onClearLogs}
-                  className="px-2 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
-                >
-                  清空
-                </button>
-              )}
+              <span className="text-xs text-slate-400">Dev Server 日志 ({logs.length})</span>
+              <div className="flex items-center gap-2">
+                {onRefreshLogs && (
+                  <button
+                    onClick={onRefreshLogs}
+                    disabled={logsLoading}
+                    className="px-2 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors disabled:opacity-50"
+                  >
+                    {logsLoading ? '加载中...' : '刷新'}
+                  </button>
+                )}
+                {logs.length > 0 && onClearLogs && (
+                  <button
+                    onClick={onClearLogs}
+                    className="px-2 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
             </div>
             {/* 日志内容 */}
             <div className="flex-1 overflow-auto p-2 font-mono text-xs">
-              {logs.length === 0 ? (
+              {logsLoading && logs.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-slate-500">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-slate-400 mr-2"></div>
+                  <span className="text-sm">加载日志中...</span>
+                </div>
+              ) : logs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-slate-500">
                   <div className="text-3xl mb-3">📋</div>
                   <p className="text-sm">暂无日志</p>
-                  <p className="text-xs mt-1 text-slate-600">网页运行时的错误和警告会显示在这里</p>
+                  <p className="text-xs mt-1 text-slate-600">Dev Server 运行时的错误和警告会显示在这里</p>
+                  {onRefreshLogs && (
+                    <button
+                      onClick={onRefreshLogs}
+                      className="mt-3 px-3 py-1.5 text-xs text-slate-400 border border-slate-600 rounded hover:bg-slate-800 transition-colors"
+                    >
+                      点击获取日志
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-0.5">
