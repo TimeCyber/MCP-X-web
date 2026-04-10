@@ -519,6 +519,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
           >
             源代码
           </button>
+          {/* 日志Tab暂时隐藏
           <button
             onClick={() => setActiveTab('logs')}
             className={`px-3 py-1.5 text-sm rounded-md transition-colors relative ${
@@ -534,6 +535,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
               </span>
             )}
           </button>
+          */}
         </div>
         <div className="flex items-center gap-2">
           {previewUrl && (

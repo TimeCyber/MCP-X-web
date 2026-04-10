@@ -185,10 +185,12 @@ export const KnowledgeForm: React.FC<KnowledgeFormProps> = ({
               value={formData.description || ''}
               onChange={handleInputChange}
               rows={4}
+              maxLength={100}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-              placeholder="请输入知识库描述"
+              placeholder="请输入知识库描述（最多100字）"
               disabled={loading}
             />
+            <div className="text-xs text-slate-400 mt-1 text-right">{(formData.description || '').length}/100</div>
           </div>
 
           {/* 按钮 */}
