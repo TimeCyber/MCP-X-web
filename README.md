@@ -60,7 +60,7 @@
 **🗡️ 仙剑奇侠传**
 
 <a href="https://github.com/TimeCyber/MCP-X-web/blob/main/public/videos/%E4%BB%99%E5%89%91%E5%A5%87%E4%BE%A0%E4%BC%A0.mp4">
-  <img src="./public/images/screenshot-4.png" alt="仙剑奇侠传 - AI生成视频" width="100%"/>
+  <img src="./public/videos/仙剑奇侠传-封面图.png" alt="仙剑奇侠传 - AI生成视频" width="100%"/>
   <br/>▶️ 点击观看视频
 </a>
 
@@ -72,7 +72,7 @@
 **⚡ 惊雷1号**
 
 <a href="https://github.com/TimeCyber/MCP-X-web/blob/main/public/videos/%E6%83%8A%E9%9B%B71%E5%8F%B7.mp4">
-  <img src="./public/images/screenshot-4.png" alt="惊雷1号 - AI生成视频" width="100%"/>
+  <img src="./public/videos/惊雷1号-封面图.png" alt="惊雷1号 - AI生成视频" width="100%"/>
   <br/>▶️ 点击观看视频
 </a>
 
