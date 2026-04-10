@@ -1,383 +1,348 @@
-# MCP-X Agent Development Platform
-
-MCP-X is an **enterprise-grade AI agent development platform** that integrates AI conversation, video generation, image editing, frontend application building, and other creative tools, providing a one-stop AI workflow solution for enterprises and developers.
-
----
-
-## 🔥 Limited Time Offer: Join Group for 100 RMB Worth of AI Tokens!
-
-💰 **GitHub Users Exclusive**: Scan the QR code below to join our WeChat group and get **100 RMB equivalent** AI image/video generation tokens for FREE!
-
-🎨 **Benefits Include**:
-- 🎬 **Video Generation Tokens**: Support for HD video creation
-- 🖼️ **Image Generation Tokens**: Professional AI art services
-- ⚡ **Instant Credit**: Tokens credited immediately after joining the group
-
 <div align="center">
-  <img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="300"/>
-  <p><strong>👆 Scan to join and claim your 100 RMB token bonus!</strong></p>
+
+# 🚀 MCP-X — Enterprise AI Platform
+
+**All-in-One AI Creative Workflow · Chat / Video / Image / Code / Agent / MCP**
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/TimeCyber/MCP-X-web?style=social)](https://github.com/TimeCyber/MCP-X-web)
+[![GitHub forks](https://img.shields.io/github/forks/TimeCyber/MCP-X-web?style=social)](https://github.com/TimeCyber/MCP-X-web)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
+[![TailwindCSS](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+
+[🌐 Live Demo](https://www.mcp-x.com) · [📖 API Docs](./API_DOCUMENTATION.md) · [💬 Join Community](#-contact-us) · [🐛 Report Issue](https://github.com/TimeCyber/MCP-X-web/issues)
+
+[🇨🇳 中文版](./README.md)
+
 </div>
 
 ---
 
-## 📸 Screenshots
+## 🔥 Limited Offer: Join the Group for Free 100 RMB Image & Video Tokens
 
-### Unified Portal
-![Unified Portal](./public/images/screenshot-2.png)
+<div align="center">
 
-### Featured Content
-![Featured Content](./public/images/screenshot-1.png)
+💰 **GitHub User Exclusive**: Scan the QR code to join our WeChat group and receive **100 RMB worth** of AI image & video generation tokens for free
 
-### Image Creation Center
-![Image Creation Center](./public/images/screenshot-3.png)
+🎬 Video Generation Tokens &nbsp;|&nbsp; 🖼️ Image Generation Tokens &nbsp;|&nbsp; ⚡ Instant Delivery
 
-### Video Creation Center
-![Video Creation Center](./public/images/screenshot-4.png)
+<img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="280"/>
+
+**👆 Scan to Join & Claim Now**
+
+</div>
 
 ---
 
-## 🏢 Enterprise Platform Features
+## 📸 Product Preview
 
-### 🔐 Security & Reliability
-- **Token Authentication**: Comprehensive user authentication and permission management
-- **Multi-tenancy Support**: Enterprise-grade multi-tenant architecture
-- **Data Isolation**: Secure user data isolation to protect enterprise privacy
+<table>
+<tr>
+<td width="50%"><img src="./public/images/screenshot-2.png" alt="Unified Portal"/><br/><div align="center"><sub>Unified Portal</sub></div></td>
+<td width="50%"><img src="./public/images/screenshot-1.png" alt="Featured Content"/><br/><div align="center"><sub>Featured Content</sub></div></td>
+</tr>
+<tr>
+<td width="50%"><img src="./public/images/screenshot-3.png" alt="Image Studio"/><br/><div align="center"><sub>Image Studio</sub></div></td>
+<td width="50%"><img src="./public/images/screenshot-4.png" alt="Video Studio"/><br/><div align="center"><sub>Video Studio</sub></div></td>
+</tr>
+</table>
 
-### ⚡ High-Performance Architecture
-- **Streaming Response**: SSE real-time streaming output with millisecond-level response
-- **Local Caching**: IndexedDB local storage to reduce server pressure
-- **Asynchronous Processing**: Long-running tasks execute asynchronously without blocking user operations
+---
 
-### 🔌 Open Integration
-- **MCP Protocol Support**: Full support for Model Context Protocol, extensible with any tools
-- **Multi-Model Integration**: Unified interface for GPT, Gemini, DeepSeek, Kimi, and other mainstream models
-- **Standardized API**: RESTful API design for easy secondary development and system integration
+## 🎬 AIGC Video Showcase — Made with MCP-X Video Studio
 
-### 📊 Enterprise Functions
-- **Knowledge Base Management**: Private enterprise knowledge base with document upload and intelligent retrieval
-- **Workflow Orchestration**: Visual Agent workflow with human approval support
-- **Usage Billing**: Comprehensive package and billing system supporting enterprise procurement
+> The following videos were fully produced by MCP-X Video Studio — from script writing, storyboard design, keyframe generation to final output, entirely AI-driven.
 
-### 🌐 Internationalization
-- **Multi-language Interface**: Chinese and English bilingual support
-- **Localized Deployment**: Support for private deployment to meet data compliance requirements
+<table>
+<tr>
+<td align="center" width="50%">
+
+**🗡️ Legend of Sword and Fairy**
+
+<a href="https://github.com/TimeCyber/MCP-X-web/blob/main/public/videos/%E4%BB%99%E5%89%91%E5%A5%87%E4%BE%A0%E4%BC%A0.mp4">
+  <img src="./public/videos/仙剑奇侠传-封面图.png" alt="Legend of Sword and Fairy - AI Generated Video" width="100%"/>
+  <br/>▶️ Click to Watch
+</a>
+
+<sub>Chinese Fantasy Theme · AI Script Analysis · Multi-scene Storyboard · Character Design</sub>
+
+</td>
+<td align="center" width="50%">
+
+**⚡ Thunder Strike No.1**
+
+<a href="https://github.com/TimeCyber/MCP-X-web/blob/main/public/videos/%E6%83%8A%E9%9B%B71%E5%8F%B7.mp4">
+  <img src="./public/videos/惊雷1号-封面图.png" alt="Thunder Strike No.1 - AI Generated Video" width="100%"/>
+  <br/>▶️ Click to Watch
+</a>
+
+<sub>Sci-Fi Action Theme · Full AI Pipeline · Video Compositing & Export</sub>
+
+</td>
+</tr>
+</table>
+
+> 💡 Click the cover image to watch on GitHub. You can also visit the [MCP-X Platform](https://www.mcp-x.com) for the full video creation experience.
+
+---
+
+## ✨ Why MCP-X?
+
+
+<table>
+<tr>
+<td align="center" width="25%">🎬<br/><b>End-to-End Video Production</b><br/><sub>From script to final cut, AI-assisted<br/>Supports Seedance 2.0 / Veo3 / Kling etc.</sub></td>
+<td align="center" width="25%">🖼️<br/><b>Professional Image Processing</b><br/><sub>Text-to-Image / Image-to-Image / Inpainting<br/>Multiple models for all creative needs</sub></td>
+<td align="center" width="25%">💻<br/><b>AI Code Generation</b><br/><sub>Conversational frontend dev, live preview<br/>Supports React / Vue / HTML</sub></td>
+<td align="center" width="25%">🤖<br/><b>Smart Chat</b><br/><sub>GPT / DeepSeek / Kimi etc.<br/>MCP Tool Calls + Knowledge Base RAG</sub></td>
+</tr>
+<tr>
+<td align="center">🔧<br/><b>MCP Marketplace</b><br/><sub>1000+ MCP Tools<br/>One-click setup, plug and play</sub></td>
+<td align="center">🧠<br/><b>Agent Marketplace</b><br/><sub>500+ Vertical Agents<br/>Ready-to-use industry solutions</sub></td>
+<td align="center">📚<br/><b>Enterprise Knowledge Base</b><br/><sub>Private document retrieval<br/>RAG-enhanced, precise Q&A</sub></td>
+<td align="center">🌍<br/><b>i18n & Private Deployment</b><br/><sub>Bilingual (CN/EN) interface<br/>Supports on-premise deployment</sub></td>
+</tr>
+</table>
 
 ---
 
 ## 🎨 Latest Updates
 
-### v0.1.3 App Builder & Preview
-- **Nano Banana Pro 4K**: Image generation adds **Nano Banana Pro 4K** for high-resolution output
-- **HTTPS preview via reverse proxy**: Parse SSE message `预览路径: /vite/{port}` and open preview at `current origin + path` (same protocol as the page) to avoid mixed content; persisted key `dev_path_{appId}`
-- **Cross-origin dev iframe editing**: For React/Vite dev previews, inject editor via fetch + `srcdoc`; URL constructor shim for `about:srcdoc` to reduce react-router-dom errors
-- **New app page**: Shows recent apps list at the bottom with links to the builder
-- **Builder UX**: Chat input max 8000 chars; loading older history keeps scroll position; source tab supports inline edit and send to AI
+<details open>
+<summary><b>v0.1.4 — Seedance 2.0 & Canvas Optimization</b></summary>
 
-### v0.1.1 New Features
-- **🎬 Graphics Workbench Reference Video Generation**: Support @ symbol to reference images on canvas for video generation, currently only supports Alibaba Qwen model
-- **✨ Comprehensive UI Optimization**: Enhanced user experience with optimized visual design and interaction flow
+- 🎬 **Seedance 2.0 Support**: New video generation model with significantly improved quality and motion
+- 🖼️ **Canvas Video Thumbnail Fix**: Fixed intermittent missing video covers after page refresh
+- 🔒 **Global 401 Interceptor**: Unified session timeout handling across all API services with auto-redirect to login
+- 📋 **Paste @Tag Auto-linking**: Pasting text with `@ImageN` / `@VideoN` tags auto-matches canvas media elements
+
+</details>
+
+<details>
+<summary><b>v0.1.3 — App Builder & Preview</b></summary>
+
+- 🍌 **Nano Banana Pro 4K**: New high-resolution image generation model
+- 🔒 **HTTPS Preview Proxy**: SSE-based preview path parsing, same-protocol preview to avoid mixed content
+- 🖼 **Cross-origin Preview Editing**: fetch + srcdoc injection for editor scripts, compatible with cross-origin dev preview
+- 📋 **New App Page**: Displays "My Apps" list with navigation to build page
+- ✏️ **Builder UX**: 8000-char input limit, source code tab supports inline editing
+
+</details>
+
+<details>
+<summary><b>v0.1.2 — Docs & Login Page Upgrade</b></summary>
+
+- 📚 Comprehensive documentation upgrade, adapted for OpenClaw integration
+- 🔐 Login page redesign: glassmorphism + dynamic glow effects
+- 🎬 Image-to-video enhancement: selected image auto-used as start frame
+
+</details>
+
+<details>
+<summary><b>v0.1.1 — Reference-based Video Generation</b></summary>
+
+- 🎬 Support @ symbol to reference canvas images for video generation
+- ✨ Full UI optimization
+
+</details>
 
 ---
 
 ## 🌟 Core Features
 
-### 1. MCP-X Video Studio (AI Video Studio)
-Supports mainstream Chinese models: Qwen, Jimeng, Kling, Hailuo, etc., and international models: Veo3, Runway, etc.
-Complete AI-driven video production workflow system supporting the entire process from script to finished product:
-- **Script Parsing**: AI automatically analyzes scripts, extracting characters, scenes, and story segments
-- **Storyboard Generation**: Intelligently generates professional shot lists including camera movements, shot sizes, and keyframes
-- **Character Design**: AI generates character visual designs
-- **Scene Concept Art**: Automatically generates scene visual designs
-- **Video Generation**: Supports text-to-video, image-to-video, and keyframe interpolation modes
-- **One-Click Export**: Browser-based one-click video clip export
-- **Asset Library Management**: Local IndexedDB storage supporting character/scene/video asset reuse
+### 🎬 1. AI Video Studio
 
-### 2. AI Conversation System
-Supports mainstream Chinese models: Deepseek, Qwen, KIMI, etc., and international models: OpenAI, etc.
-- **Multi-Model Support**: Integrates GPT, Gemini, DeepSeek, Kimi, and other large language models
-- **Streaming Response**: SSE real-time streaming output
-- **MCP Tool Integration**: Supports Model Context Protocol tool invocation
-- **Web Search**: Integrated web search functionality with result display
-- **Human Intervention**: Agent workflow supports human confirmation and intervention
-- **File Upload**: Supports conversations with file attachments
+> Supports: Qwen / Jimeng / Kling / Hailuo / **Seedance 2.0** / Veo3 / Runway etc.
 
-### 3. Frontend Application Builder (App Builder)
-AI frontend building experience similar to Bolt/Loveable:
-- **Conversational Development**: Describe requirements in natural language, AI generates code in real-time
-- **Multi-Framework Support**: HTML, React, Vue, static websites
-- **Real-Time Preview**: Instant preview; production can proxy dev server at `/vite/{port}` so the UI builds same-origin HTTPS URLs from SSE “preview path”
-- **Visual Editing**: Click elements to refine (with cross-origin dev iframe injection when needed)
-- **One-Click Deployment**: Cloud deployment support
-- **Code Download**: Complete code package download
-
-### 4. AI Image Editor
-Supports mainstream Chinese models: Qwen, Seed, etc., and international models: Nano Banana, **Nano Banana Pro 4K**.
-- **Text-to-Image**: Generate images from text descriptions
-- **Image-to-Image**: Generate new images based on reference images
-- **Local Editing**: Mask support for local area editing
-- **Multi-Model Selection**: Support for various image generation models
-- **Image-to-Video**: Generate dynamic videos from images with multiple resolution and duration options
-- **Reference Video Generation**: Support @ symbol to reference images on canvas for video generation, currently only supports Alibaba Qwen model
-
-### 5. MCP Service Marketplace
-- **Service Discovery**: Browse and search MCP services
-- **Category Management**: Service directory organized by function
-- **One-Click Configuration**: Quick configuration and activation of MCP services
-- **Tool Detection**: Automatically detect tool lists provided by services
-
----
-
-## 💎 Platform Highlights
+End-to-end AI video production from script to final cut:
 
 | Feature | Description |
 |---------|-------------|
-| 🎬 **Full Video Production** | From script to finished product, AI assists throughout, supporting promotional videos, short videos, and drama films |
-| 🔧 **MCP Marketplace** | MCP tool collection and aggregation, with thousands of MCP tools integrated, expanding AI capability boundaries |
-| 🔧 **Agent Marketplace** | Agent collection and aggregation, with 500+ common agents integrated for vertical agent conversations |
-| 💻 **AI Code Generation** | Conversational frontend development with real-time preview, supporting React/Vue/HTML frameworks |
-| 🖼️ **Professional Image Processing** | Text-to-image, image-to-image, local editing, @ symbol reference video generation, multiple models available for various creative needs |
-| 📚 **Enterprise Knowledge Base** | Private knowledge base management, intelligent document parsing, RAG-enhanced retrieval support |
-| 💰 **Membership Billing** | Pay-as-you-go + subscription packages, supporting membership billing and WeChat recharge |
-| 🌍 **Multi-Language Support** | Chinese and English bilingual interface, AI output supports multiple languages |
+| Script Analysis | AI auto-analyzes scripts, extracts characters, scenes, story segments |
+| Storyboard Generation | Smart storyboard with camera movement, shot types, keyframes |
+| Characters & Scenes | AI-generated character portraits and scene concept art |
+| Video Generation | Text-to-video / Image-to-video / Start-end frame interpolation |
+| One-click Export | Browser-based video segment merging and export |
+| Asset Library | IndexedDB local storage, reusable character/scene/video assets |
+
+### 💬 2. AI Chat System
+
+> Supports: GPT / Gemini / DeepSeek / Kimi / Qwen etc.
+
+- Multi-model switching · SSE streaming · MCP tool calls
+- Web search integration · Agent workflow with human-in-the-loop · File upload chat
+- Enterprise knowledge base with RAG-enhanced retrieval
+
+### 💻 3. Frontend App Builder
+
+> Similar to Bolt / Loveable AI frontend building experience
+
+- Conversational development: describe requirements in natural language → AI generates code in real-time
+- Multi-framework: HTML / React / Vue / Static sites
+- Live preview · Visual editing · One-click deploy · Code download
+
+### 🖼️ 4. AI Image Editor
+
+> Supports: Qwen / Seed / Nano Banana / **Nano Banana Pro 4K** etc.
+
+- Text-to-image · Image-to-image · Mask inpainting
+- Image-to-video · @ symbol reference-based video generation
+- Multi-model selection · Multiple size options
+
+### 🔧 5. MCP Marketplace & Agent Marketplace
+
+- **1000+** MCP tools, browse by category, search, one-click setup
+- **500+** Agent bots, featured/latest/categorized, ready to use
 
 ---
 
-## 📋 Complete Feature List
+## 🏢 Enterprise Features
 
-### User System
-- User registration/login (email verification code)
-- GitHub OAuth login
-- Token authentication management
-- User settings
+| Feature | Description |
+|---------|-------------|
+| 🔐 **Security** | Token authentication · Multi-tenant architecture · Data isolation |
+| ⚡ **Performance** | SSE streaming · IndexedDB local cache · Async task processing |
+| 🔌 **Open Integration** | MCP protocol · Unified multi-model API · RESTful API |
+| 📊 **Management** | Knowledge base · Workflow orchestration · Human approval · Usage billing |
+| 🌐 **Internationalization** | Bilingual (CN/EN) · On-premise deployment · Data compliance |
 
-### AI Conversation
-- Multi-model conversation
-- Session management (create/delete/history)
-- Streaming response
-- File upload conversation
-- Web search result display
-- Agent workflow human intervention
-
-### MCP Services
-- MCP service list/details
-- Service category browsing
-- Service search
-- User MCP configuration management
-- Tool detection and execution
-
-### Agent Marketplace
-- Agent category list
-- Agent detail view
-- Agent search
-- Featured/Latest agents
-
-### Video Studio
-- Project management (create/delete/save)
-- Script parsing (AI analysis)
-- Storyboard list generation
-- Character design generation
-- Scene concept art generation
-- Keyframe image generation
-- Video generation (text-to-video/image-to-video/keyframe)
-- Video model selection
-- Video resolution/aspect ratio selection
-- Audio upload (local/URL)
-- Video merge and export
-- Asset library management
-
-### Image Editing
-- Text-to-image
-- Image-to-image
-- Mask editing
-- Multi-model selection
-- Image size settings
-- Image-to-video
-- @ Symbol reference video generation (Alibaba Qwen model)
-
-### Application Building
-- Create application
-- Conversational code generation
-- Real-time preview
-- Application deployment
-- Code download
-- Application management
-
-### Knowledge Base
-- Knowledge base create/edit/delete
-- Attachment upload
-- Knowledge fragment management
-- File translation
-
-### Payment System
-- VIP packages
-- WeChat payment
-- Order management
-- Balance inquiry
-
-### Other Features
-- Multi-language support (Chinese/English)
-- Feedback submission
-- Contact us
-
-## 🛠 Tech Stack
-
-- **Frontend Framework**: React 18 + TypeScript
-- **Build Tool**: Vite
-- **UI Framework**: Tailwind CSS + Ant Design
-- **State Management**: Zustand + React Context
-- **Routing**: React Router v6
-- **HTTP Client**: Axios
-- **Markdown Rendering**: react-markdown + remark-gfm
-- **Animation**: Framer Motion
-- **Icons**: Lucide React
-- **Local Storage**: IndexedDB
-- **Video Processing**: FFmpeg.wasm
-- **File Compression**: JSZip
+---
 
 ## 🚀 Quick Start
 
 ### Requirements
+
 - Node.js 18+
 - npm or yarn
 
-### Install Dependencies
+### Install & Run
+
 ```bash
+# Clone the project
+git clone https://github.com/TimeCyber/MCP-X-web.git
+cd MCP-X-web
+
+# Install dependencies
 npm install
-```
 
-### Development Mode
-```bash
+# Development mode
 npm run dev
-```
 
-### Production Build
-```bash
+# Production build
 npm run build
 ```
 
-### Preview Build
-```bash
-npm run preview
+### Configuration
+
+Modify the API URL in `src/config/index.ts`:
+
+```typescript
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? 'https://www.mcp-x.com/prod-api' : 'https://www.mcp-x.com/prod-api');
 ```
+
+---
+
+## 🛠 Tech Stack
+
+| Category | Technology |
+|----------|-----------|
+| Frontend Framework | React 18 + TypeScript |
+| Build Tool | Vite 5 |
+| UI | Tailwind CSS + Ant Design |
+| State Management | Zustand + React Context |
+| Routing | React Router v6 |
+| HTTP Client | Axios |
+| Markdown | react-markdown + remark-gfm |
+| Animation | Framer Motion |
+| Icons | Lucide React |
+| Local Storage | IndexedDB |
+| Video Processing | FFmpeg.wasm |
+| File Compression | JSZip |
+
+---
 
 ## 📁 Project Structure
 
 ```
 src/
-├── assets/          # Static resources
 ├── components/      # Components
-│   ├── app/         # Application building components
-│   ├── chat/        # Chat components
-│   ├── image-editor/# Image editing components
-│   ├── layout/      # Layout components
-│   ├── ui/          # Common UI components
-│   ├── video-gen/   # Video generation components
-│   └── workflow/    # Workflow components
-├── config/          # Configuration files
+│   ├── app/         # App Builder
+│   ├── chat/        # Chat
+│   ├── image-editor/# Image Editor
+│   ├── layout/      # Layout
+│   ├── ui/          # Common UI
+│   ├── video-gen/   # Video Generation
+│   └── workflow/    # Workflow
+├── config/          # Configuration
 ├── contexts/        # React Context
-├── data/            # Static data
 ├── hooks/           # Custom Hooks
 ├── i18n/            # Internationalization
-├── pages/           # Page components
-├── services/        # API services
-├── styles/          # Style files
-├── types/           # TypeScript type definitions
-└── utils/           # Utility functions
+├── pages/           # Pages
+├── services/        # API Services
+├── types/           # TypeScript Types
+└── utils/           # Utilities
 ```
 
-## 🔧 Configuration
+---
 
-### Link Configuration
-Modify link addresses in the `src/config/index.ts` file:
+## 📖 Documentation
 
-```typescript
-// Modify API base URL
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.PROD ? 'https://www.mcp-x.com/prod-api' : 'https://www.mcp-x.com/prod-api');
-
-// Modify static resource base URL
-const staticBaseUrl = import.meta.env.VITE_STATIC_BASE_URL ||
-  (import.meta.env.PROD ? '/prod-api/static' : '/static');
-```
-
-### MCP Configuration
-MCP service configuration supports multiple transport methods:
-- stdio (command line)
-- SSE (Server-Sent Events)
-- WebSocket
-
-## 📖 Related Documentation
-
-- [Video Generation API Documentation](./VIDEO_GENERATION_API.md)
-- [MCP-X Video Studio Integration Guide](./CINEGEN_INTEGRATION.md)
-- [Frontend Building Feature Guide](./APP_BUILD_FEATURE.md)
-- [Asset Library Feature Guide](./ASSET_LIBRARY_FEATURE.md)
-- [Human Intervention Integration Guide](./HUMAN_FEEDBACK_INTEGRATION.md)
-
-## 📄 License
-
-This project is licensed under **Apache License 2.0** with additional commercial use terms:
-
-- ✅ Free for individual users
-- ✅ Free for educational institutions
-- ✅ Free for non-profit organizations
-- ✅ Free for companies with fewer than 20 employees
-- ⚠️ **Companies with 20 or more employees require commercial authorization**
-
-### Commercial Authorization
-
-If your company/organization has 20 or more employees and wishes to use this software for commercial purposes, please contact us for commercial authorization:
-
-📧 **Commercial Authorization Inquiry**: ganyizhi@timecyber.com.cn
-
-For detailed terms, please refer to the [LICENSE](./LICENSE) file.
-
-## 🤝 Contact Us
-
-For questions or suggestions, please contact us through:
-- Submit an Issue
-- Email: ganyizhi@timecyber.com.cn
-- Join WeChat Group:
-
-<div align="center">
-  <img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="300"/>
-  <p>Scan to join MCP-X Technical Exchange Group</p>
-</div>
+- [📋 System API Documentation](./API_DOCUMENTATION.md)
+- [🏗️ App Builder Guide](./APP_BUILD_FEATURE.md)
 
 ---
 
 ## 🚀 Backend Open Source Plan
 
-**Backend Code Status**: Currently being organized, expected to be open-sourced soon
+<div align="center">
 
-**Open Source Conditions**: This project reaches **1000 stars** ⭐ on GitHub, and over 300 real developers join the enterprise WeChat group, the backend code will be open-sourced simultaneously
+### ⭐ 1000 Stars = Full Backend Open Source
 
-**Backend Tech Stack**:
-- Spring Boot 3.x
-- MySQL 8.0
-- Redis
-- Docker & Kubernetes
-- AI Model Integration (Alibaba Qwen, Jimeng, etc.)
+</div>
 
-**Support Us**:
-- ⭐ Give us a star on GitHub
-- 🔄 Share the project to tech communities
-- 💬 Participate in discussions and contribute code
+| Item | Details |
+|------|---------|
+| **Current Status** | Backend code being organized, open source coming soon |
+| **Conditions** | GitHub reaches **1000 ⭐** + 300 real developers in WeChat group |
+| **Backend Stack** | Spring Boot 3.x · MySQL 8.0 · Redis · Docker & K8s |
+| **AI Integration** | Qwen · Jimeng · Seedance · Veo3 etc. |
 
-**Goal**: 1000 ⭐ = Complete Open Source! We look forward to your support! 🎉
+**Support us**: ⭐ Star this project · 🔄 Share to tech communities · 💬 Join discussions
 
 ---
 
-## 📜 Intellectual Property Declaration
+## 📄 License
 
-⚠️ **Important Notice**: This project has been registered for software copyright with relevant authorities, MCP-X is a registered trademark, please respect intellectual property rights.
+This project is licensed under **Apache License 2.0** with additional commercial terms:
 
-**Copyright Declaration**:
-- This project adopts Apache License 2.0 open source protocol
-- All trademarks and copyrights are reserved
-- Commercial use requires authorization
+| Use Case | Free? |
+|----------|-------|
+| ✅ Individual users | Free |
+| ✅ Educational institutions | Free |
+| ✅ Non-profit organizations | Free |
+| ✅ Companies with fewer than 20 employees | Free |
+| ⚠️ Companies with 20+ employees | Commercial license required |
 
-**Trademark Protection**:
-- MCP-X is a registered trademark
-- Unauthorized commercial use is prohibited, legal action will be taken
-- Respect intellectual property rights and jointly maintain the open source ecosystem
+📧 **Commercial licensing**: ganyizhi@timecyber.com.cn &nbsp;|&nbsp; See [LICENSE](./LICENSE)
+
+---
+
+## 🤝 Contact Us
+
+- 📮 Submit an [Issue](https://github.com/TimeCyber/MCP-X-web/issues)
+- 📧 Email: ganyizhi@timecyber.com.cn
+- 💬 WeChat Group:
+
+<div align="center">
+  <img src="./public/images/wechat-group-qrcode.jpg" alt="WeChat Group" width="280"/>
+  <p>Scan to join the MCP-X Tech Community</p>
+</div>
+
+---
+
+## 📜 Intellectual Property Notice
+
+> ⚠️ This project has registered software copyright. **MCP-X** is a registered trademark. Licensed under Apache License 2.0 with all trademark and copyright rights reserved. Unauthorized commercial use is prohibited. Respect intellectual property and help maintain a healthy open source ecosystem.

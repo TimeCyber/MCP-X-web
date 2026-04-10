@@ -14,6 +14,8 @@
 
 [🌐 在线体验](https://www.mcp-x.com) · [📖 API 文档](./API_DOCUMENTATION.md) · [💬 加入社群](#-联系我们) · [🐛 提交 Issue](https://github.com/TimeCyber/MCP-X-web/issues)
 
+[🇬🇧 English Version](./README_EN.md)
+
 </div>
 
 ---
