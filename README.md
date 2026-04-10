@@ -49,6 +49,41 @@
 
 ---
 
+## 🎬 AIGC 视频案例 — MCP-X 视频工作台出品
+
+> 以下视频均由 MCP-X 视频工作台全流程生成，从剧本编写、分镜设计、关键帧生成到最终成片，全程 AI 驱动。
+
+<table>
+<tr>
+<td align="center" width="50%">
+
+**🗡️ 仙剑奇侠传**
+
+https://github.com/user-attachments/assets/placeholder
+
+[▶️ 点击下载观看](./public/videos/仙剑奇侠传.mp4)
+
+<sub>古风仙侠题材 · AI 剧本解析 · 多场景分镜 · 角色定妆照生成</sub>
+
+</td>
+<td align="center" width="50%">
+
+**⚡ 惊雷1号**
+
+https://github.com/user-attachments/assets/placeholder
+
+[▶️ 点击下载观看](./public/videos/惊雷1号.mp4)
+
+<sub>科幻动作题材 · AI 全流程制作 · 视频合成导出</sub>
+
+</td>
+</tr>
+</table>
+
+> 💡 **提示**：GitHub Markdown 不支持直接播放视频，请点击链接下载后观看，或访问 [MCP-X 在线平台](https://www.mcp-x.com) 体验完整的视频创作流程。
+
+---
+
 ## ✨ 为什么选择 MCP-X？
 
 
