@@ -56,7 +56,7 @@ apiClient.interceptors.response.use(
 export interface ShowcaseCategory {
   id: number;
   categoryName: string;
-  contentType: 'text' | 'image' | 'video';
+  contentType: 'text' | 'image' | 'video' | 'longvideo' | 'app';
   customTag?: string;
   description?: string;
   sort?: number;
@@ -70,7 +70,7 @@ export interface ShowcaseContent {
   id: number;
   title: string;
   categoryId: number;
-  contentType: 'text' | 'image' | 'video';
+  contentType: 'text' | 'image' | 'video' | 'longvideo' | 'app';
   originalPrompt?: string;
   generatedResult: string;
   thumbnailUrl?: string;
@@ -108,7 +108,7 @@ export interface PageParams {
 // 获取分类列表参数
 export interface GetCategoryListParams extends PageParams {
   categoryName?: string;
-  contentType?: 'text' | 'image' | 'video';
+  contentType?: 'text' | 'image' | 'video' | 'longvideo' | 'app';
   status?: string;
 }
 
@@ -116,7 +116,7 @@ export interface GetCategoryListParams extends PageParams {
 export interface GetShowcaseListParams extends PageParams {
   title?: string;
   categoryId?: number;
-  contentType?: 'text' | 'image' | 'video';
+  contentType?: 'text' | 'image' | 'video' | 'longvideo' | 'app';
   originalPrompt?: string;
   isRecommended?: string;
   status?: string;

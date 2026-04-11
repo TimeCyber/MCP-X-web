@@ -1571,6 +1571,62 @@ export const CreatorHubPage: React.FC = () => {
                             </div>
                           </div>
                         </>
+                      ) : item.contentType === 'longvideo' ? (
+                        <>
+                          {isValidThumbnail(item.thumbnailUrl) ? (
+                            <img
+                              src={item.thumbnailUrl}
+                              alt={item.title}
+                              className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          ) : (() => {
+                            // 尝试从 generatedResult 中解析第一个镜头的首帧图
+                            try {
+                              const projectData = JSON.parse(item.generatedResult || '{}');
+                              const shots = projectData.shots || [];
+                              const firstShot = shots.find((s: any) => s.keyframes?.find((kf: any) => kf.type === 'start' && kf.imageUrl));
+                              const imageUrl = firstShot?.keyframes?.find((kf: any) => kf.type === 'start')?.imageUrl;
+                              if (imageUrl) {
+                                return <img src={imageUrl} alt={item.title} className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300" />;
+                              }
+                            } catch {}
+                            return (
+                              <div className="w-full aspect-video flex items-center justify-center text-gray-600">
+                                <Film className="w-12 h-12" />
+                              </div>
+                            );
+                          })()}
+                          {/* 长视频标识 + 播放按钮 */}
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors z-10">
+                            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                              <Play className="w-6 h-6 text-white ml-1" />
+                            </div>
+                          </div>
+                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-indigo-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
+                            <Film className="w-3 h-3" />
+                            {currentLanguage === 'zh' ? '长视频' : 'Long Video'}
+                          </div>
+                        </>
+                      ) : item.contentType === 'app' ? (
+                        <>
+                          {isValidThumbnail(item.thumbnailUrl) ? (
+                            <img
+                              src={item.thumbnailUrl}
+                              alt={item.title}
+                              className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-green-900/40 to-emerald-900/40 text-green-400">
+                              <Globe className="w-12 h-12" />
+                            </div>
+                          )}
+                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
+                            <Globe className="w-3 h-3" />
+                            {currentLanguage === 'zh' ? '网页应用' : 'Web App'}
+                          </div>
+                        </>
                       ) : item.contentType === 'image' ? (
                         item.thumbnailUrl ? (
                           <img
@@ -1874,6 +1930,44 @@ export const CreatorHubPage: React.FC = () => {
                       </div>
                     );
                   })()}
+
+                  {/* App 类型 - iframe 预览 */}
+                  {selectedShowcase.contentType === 'app' && (() => {
+                    const appUrl = selectedShowcase.generatedResult
+                      ? `https://mcp-x.com/dist/${selectedShowcase.generatedResult}`
+                      : '';
+                    return (
+                      <div className="space-y-3">
+                        {appUrl ? (
+                          <>
+                            <div className="bg-gray-900 rounded-lg overflow-hidden border border-gray-800" style={{ height: '480px' }}>
+                              <iframe
+                                src={appUrl}
+                                title={selectedShowcase.title}
+                                className="w-full h-full border-none"
+                                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={appUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/20 text-green-400 text-xs rounded-lg hover:bg-green-500/30 transition-colors"
+                              >
+                                <Globe className="w-3.5 h-3.5" />
+                                {currentLanguage === 'zh' ? '新窗口打开' : 'Open in New Tab'}
+                              </a>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="bg-gray-900 rounded-lg p-4 text-gray-400 text-sm">
+                            {currentLanguage === 'zh' ? '应用地址无效' : 'Invalid app URL'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 右侧：提示词和信息 */}
@@ -2085,6 +2179,22 @@ export const CreatorHubPage: React.FC = () => {
                             duration: '5秒',
                             autoSubmit: false
                           } 
+                        });
+                      } else if (selectedShowcase.contentType === 'longvideo') {
+                        // 跳转到视频工作室，带入提示词
+                        navigate('/video-studio', {
+                          state: {
+                            initialPrompt: prompt,
+                            autoSubmit: false
+                          }
+                        });
+                      } else if (selectedShowcase.contentType === 'app') {
+                        // 跳转到网页生成，带入提示词
+                        navigate('/app/new', {
+                          state: {
+                            initialPrompt: prompt,
+                            autoSubmit: false
+                          }
                         });
                       }
                       
