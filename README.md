@@ -1,3 +1,5 @@
+![MCP-X Logo](./public/images/logo.png)
+
 <div align="center">
 
 # 🚀 MCP-X — 企业级 AI 中台
