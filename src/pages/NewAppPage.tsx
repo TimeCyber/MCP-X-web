@@ -9,6 +9,11 @@ interface CreateAppForm {
   initPrompt: string;
 }
 
+interface NewAppPageLocationState {
+  initialPrompt?: string;
+  autoSubmit?: boolean;
+}
+
 // 生成类型选择已取消
 
 const examplePrompts = [
@@ -33,6 +38,7 @@ const examplePrompts = [
 export const NewAppPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const locationState = location.state as NewAppPageLocationState | null;
   const { currentLanguage } = useLanguage();
   const [form, setForm] = useState<CreateAppForm>({
     initPrompt: '',
@@ -62,6 +68,13 @@ export const NewAppPage: React.FC = () => {
       navigate('/login', { state: { from: location } });
     }
   }, [userId, navigate, location]);
+
+  // 从精选内容「做同款」跳转过来时，自动回填模板提示词到输入框
+  useEffect(() => {
+    if (locationState?.initialPrompt) {
+      setForm(prev => ({ ...prev, initPrompt: locationState.initialPrompt || '' }));
+    }
+  }, [locationState?.initialPrompt]);
 
   useEffect(() => {
     if (!userId) return;

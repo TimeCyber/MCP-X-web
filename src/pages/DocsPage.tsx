@@ -206,15 +206,15 @@ const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLa
             {[
               {
                 label: zh ? '① 文生视频（只传 prompt）' : '① Text-to-Video (prompt only)',
-                code: `{\n  "model": "kling-v1.6-standard",\n  "prompt": "a cat running in the park",\n  "duration": 5,\n  "ratio": "16:9",\n  "resolution": "720P",\n  "userId": "string",\n  "sessionId": "string",\n  "appId": "mcpx-video-studio"\n}`,
+                code: `{\n  "model": "kling-v1.6-standard",\n  "prompt": "a cat running in the park",\n  "duration": 5,\n  "ratio": "16:9",\n  "resolution": "720P",\n  "userId": "string",\n  "sessionId": "string",\n  "appId": "mcpx-video-studio",\n  "audio": false,\n  "audioUrl": "https://cdn.../bg.mp3"  // 可选：背景音频\n}`,
               },
               {
                 label: zh ? '② 图生视频（传 imageUrl）' : '② Image-to-Video (imageUrl)',
-                code: `{\n  ...// 同上\n  "imageUrl": "https://your-start-frame.jpg"\n}`,
+                code: `{\n  ...// 同上\n  "imageUrl": "https://your-start-frame.jpg",\n  "audio": false,\n  "audioUrl": "https://cdn.../bg.mp3"  // 可选：背景音频\n}`,
               },
               {
                 label: zh ? '③ 首尾帧插值（传 firstFrameUrl + lastFrameUrl）' : '③ Keyframe Interpolation',
-                code: `{\n  ...// 同上\n  "firstFrameUrl": "https://start.jpg",\n  "lastFrameUrl": "https://end.jpg"\n}`,
+                code: `{\n  ...// 同上\n  "firstFrameUrl": "https://start.jpg",\n  "lastFrameUrl": "https://end.jpg",\n  "audio": false,\n  "audioUrl": "https://cdn.../bg.mp3"  // 可选：背景音频\n}`,
               },
             ].map((item, i) => (
               <div key={i} className="rounded-xl overflow-hidden border border-gray-800">
@@ -249,6 +249,7 @@ const VideoGenGuideSection: React.FC<{ currentLanguage: string }> = ({ currentLa
   "ratio": "16:9",
   "resolution": "1080P",
   "audio": true,
+  "audioUrl": "https://cdn.../bg.mp3",  // 可选：背景音频
   "referenceMaterials": [
     { "type": "image", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg" },
     { "type": "video", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/30/4773506735b04b7e98e18b76d180cdfb.mp4" }
@@ -888,6 +889,7 @@ data: [DONE]`
   "sessionId": "string",
   "appId": "mcpx-video-studio",
   "audio": false,                 // 可选：是否生成同步音频
+  "audioUrl": "https://cdn.../bg.mp3",  // 可选：背景音频
   "seed": 12345                   // 可选：随机种子
 }`,
           response: `data: {"choices":[{"delta":{"content":"{\\"progress\\":10,\\"message\\":\\"排队中\\"}"}}]}
@@ -938,7 +940,9 @@ data: [DONE]`
   "userId": "string",
   "sessionId": "string",
   "appId": "mcpx-video-studio",
-  "seed": 42                      // 可选：固定 seed 可复现结果
+  "seed": 42,                     // 可选：固定 seed 可复现结果
+  "audio": false,
+  "audioUrl": "https://cdn.../bg.mp3"  // 可选：背景音频
 }`,
           response: `// 与文生视频相同的 SSE 格式
 // 视频完成后额外返回 lastFrameUrl（可用于下一镜头的起始帧）
@@ -963,6 +967,7 @@ data: [DONE]`
   "ratio": "16:9",
   "resolution": "1080P",
   "audio": true,
+  "audioUrl": "https://cdn.../bg.mp3",  // 可选：背景音频
   "referenceMaterials": [
     { "type": "image", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/21/2ffb904ea50e44ea987a6d5ad05feffd.jpg" },
     { "type": "video", "url": "https://mcpx.oss-cn-shanghai.aliyuncs.com/2026/03/30/4773506735b04b7e98e18b76d180cdfb.mp4" }

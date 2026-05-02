@@ -1,10 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Download, LogOut, User, Settings, Bell, Award, MessageSquare, Cpu, Bot, Globe, ChevronDown, Gift, Copy, X, Check } from 'lucide-react';
+import { Download, LogOut, User, Settings, Bell, Award, MessageSquare, Cpu, Bot, Globe, ChevronDown, Gift, Copy, X, Check, Sparkles, Compass } from 'lucide-react';
 import { Logo} from '../ui/Logo';
 import { useLanguage } from '../../contexts/LanguageContext';
 import api from '../../services/api';
+import { toast } from '../../utils/toast';
 
 // 邀请注册组件
 const InviteButton: React.FC<{ token: string | null }> = ({ token }) => {
@@ -177,6 +178,9 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
+  const [isCommunityMenuOpen, setIsCommunityMenuOpen] = useState(false);
+  const communityMenuTimerRef = useRef<number | null>(null);
+  const setCommunityMenuTimer = (t: number) => { communityMenuTimerRef.current = t; };
   const aiMenuTimer = useRef<number | null>(null);
   const openAiMenu = () => {
     if (aiMenuTimer.current) {
@@ -274,75 +278,81 @@ const NavbarContent: React.FC<{ transparent?: boolean }> = ({ transparent = fals
             </button>
             {isAiMenuOpen && (
               <div
-                className="absolute mt-1 right-0 w-44 bg-gray-900 rounded-md shadow-lg border border-gray-800 py-1 z-50"
+                className="absolute mt-1 left-1/2 -translate-x-1/2 w-[520px] bg-gray-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-gray-700/60 p-5 z-50"
                 onMouseEnter={openAiMenu}
                 onMouseLeave={closeAiMenuWithDelay}
               >
-                <button
-                  onClick={() => {
-                    if (!localStorage.getItem('token')) {
-                      navigate('/login', { state: { from: { pathname: '/chat' } } });
-                      return;
-                    }
-                    navigate('/chat');
-                  }}
-                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI文字工作台' : 'AI Chat'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!localStorage.getItem('token')) {
-                      navigate('/login', { state: { from: { pathname: '/image-editor' } } });
-                      return;
-                    }
-                    navigate('/image-editor');
-                  }}
-                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI图形工作台' : 'AI Graphics Studio'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!localStorage.getItem('token')) {
-                      navigate('/login', { state: { from: { pathname: '/video-studio' } } });
-                      return;
-                    }
-                    navigate('/video-studio');
-                  }}
-                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? 'AI视频工作台' : 'AI Video Studio'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!localStorage.getItem('token')) {
-                      navigate('/login', { state: { from: { pathname: location.pathname } } });
-                      return;
-                    }
-                    navigate('/app/new');
-                  }}
-                  className="w-full text-left block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
-                >
-                  {currentLanguage === 'zh' ? '一句话建站' : 'One‑sentence Builder'}
-                </button>
+                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3 px-1">{currentLanguage === 'zh' ? '创作工具' : 'Creative Tools'}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => { if (!localStorage.getItem('token')) { navigate('/login', { state: { from: { pathname: '/chat' } } }); return; } navigate('/chat'); }} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors text-left group">
+                    <div className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-500/25 transition-colors"><MessageSquare size={18} className="text-blue-400" /></div>
+                    <div><div className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">{currentLanguage === 'zh' ? 'AI 文字工作台' : 'AI Chat'}</div><div className="text-xs text-gray-500 mt-0.5">{currentLanguage === 'zh' ? '智能对话，生成文章、代码' : 'Smart chat, articles & code'}</div></div>
+                  </button>
+                  <button onClick={() => { if (!localStorage.getItem('token')) { navigate('/login', { state: { from: { pathname: '/image-editor' } } }); return; } navigate('/image-editor'); }} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors text-left group">
+                    <div className="w-9 h-9 rounded-lg bg-purple-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-purple-500/25 transition-colors"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-400"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+                    <div><div className="text-sm font-medium text-white group-hover:text-purple-400 transition-colors">{currentLanguage === 'zh' ? 'AI 图形工作台' : 'AI Graphics'}</div><div className="text-xs text-gray-500 mt-0.5">{currentLanguage === 'zh' ? '文生图、图生图、局部编辑' : 'Text/image to image, inpainting'}</div></div>
+                  </button>
+                  <button onClick={() => { if (!localStorage.getItem('token')) { navigate('/login', { state: { from: { pathname: '/video-studio' } } }); return; } navigate('/video-studio'); }} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors text-left group">
+                    <div className="w-9 h-9 rounded-lg bg-pink-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-pink-500/25 transition-colors"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></div>
+                    <div><div className="text-sm font-medium text-white group-hover:text-pink-400 transition-colors">{currentLanguage === 'zh' ? 'AI 视频工作台' : 'AI Video Studio'}</div><div className="text-xs text-gray-500 mt-0.5">{currentLanguage === 'zh' ? '剧本到成片，全流程 AI 制作' : 'Script to final cut, full AI'}</div></div>
+                  </button>
+                  <button onClick={() => { if (!localStorage.getItem('token')) { navigate('/login', { state: { from: { pathname: location.pathname } } }); return; } navigate('/app/new'); }} className="flex items-start gap-3 p-3 rounded-lg hover:bg-white/5 transition-colors text-left group">
+                    <div className="w-9 h-9 rounded-lg bg-green-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-green-500/25 transition-colors"><Globe size={18} className="text-green-400" /></div>
+                    <div><div className="text-sm font-medium text-white group-hover:text-green-400 transition-colors">{currentLanguage === 'zh' ? '一句话建站' : 'Website Builder'}</div><div className="text-xs text-gray-500 mt-0.5">{currentLanguage === 'zh' ? '自然语言生成完整网站' : 'Generate sites with natural language'}</div></div>
+                  </button>
+                </div>
               </div>
             )}
           </div>
-          <Link
-            to="/mcp"
-            className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2 whitespace-nowrap"
+          {/* 社区菜单 */}
+          <div
+            className="relative"
+            onMouseEnter={() => { if (communityMenuTimerRef.current) { window.clearTimeout(communityMenuTimerRef.current); communityMenuTimerRef.current = null; } setIsCommunityMenuOpen(true); }}
+            onMouseLeave={() => { communityMenuTimerRef.current = window.setTimeout(() => setIsCommunityMenuOpen(false), 180); }}
           >
-            <Cpu size={16} className="mr-1" />
-            MCP
-          </Link>
-          <Link
-            to="/agent"
-            className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2 whitespace-nowrap"
-          >
-            <Bot size={16} className="mr-1" />
-            Agent
-          </Link>
+            <button className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2 whitespace-nowrap">
+              <Compass size={16} className="mr-1" />
+              {currentLanguage === 'zh' ? '市场' : 'Community'}
+              <ChevronDown size={14} className="ml-1 opacity-70" />
+            </button>
+            {isCommunityMenuOpen && (
+              <div
+                className="absolute mt-1 left-1/2 -translate-x-1/2 w-[480px] bg-gray-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-gray-700/60 p-5 z-50"
+                onMouseEnter={() => { if (communityMenuTimerRef.current) { window.clearTimeout(communityMenuTimerRef.current); communityMenuTimerRef.current = null; } setIsCommunityMenuOpen(true); }}
+                onMouseLeave={() => { communityMenuTimerRef.current = window.setTimeout(() => setIsCommunityMenuOpen(false), 180); }}
+              >
+                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3 px-1">{currentLanguage === 'zh' ? '市场' : 'Marketplace'}</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <Link to="/agent" className="flex flex-col items-center p-4 rounded-xl border border-gray-800 hover:border-gray-600 bg-white/[0.02] hover:bg-white/5 transition-all group text-center">
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center mb-2.5 group-hover:bg-cyan-500/25 transition-colors"><Bot size={20} className="text-cyan-400" /></div>
+                    <div className="text-sm font-semibold text-white mb-1">Agent</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">{currentLanguage === 'zh' ? '500+ 智能体，开箱即用' : '500+ agents, ready to use'}</div>
+                  </Link>
+                  <Link to="/mcp" className="flex flex-col items-center p-4 rounded-xl border border-gray-800 hover:border-gray-600 bg-white/[0.02] hover:bg-white/5 transition-all group text-center">
+                    <div className="w-10 h-10 rounded-xl bg-orange-500/15 flex items-center justify-center mb-2.5 group-hover:bg-orange-500/25 transition-colors"><Cpu size={20} className="text-orange-400" /></div>
+                    <div className="text-sm font-semibold text-white mb-1">MCP</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">{currentLanguage === 'zh' ? '1000+ 工具，扩展 AI 能力' : '1000+ tools, extend AI'}</div>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCommunityMenuOpen(false);
+                      toast.info(currentLanguage === 'zh' ? '即将上线' : 'Coming soon');
+                    }}
+                    className="flex flex-col items-center p-4 rounded-xl border border-gray-800 hover:border-gray-600 bg-white/[0.02] hover:bg-white/5 transition-all group text-center w-full cursor-pointer"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center mb-2.5 group-hover:bg-violet-500/25 transition-colors"><Sparkles size={20} className="text-violet-400" /></div>
+                    <div className="text-sm font-semibold text-white mb-1">Skill</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">{currentLanguage === 'zh' ? '专业技能，增强智能体' : 'Pro skills for agents'}</div>
+                  </button>
+                </div>
+                <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between">
+                  <span className="text-xs text-gray-600">{currentLanguage === 'zh' ? '发现更多 AI 生态资源' : 'Discover more AI ecosystem resources'}</span>
+                  <Link to="/docs" className="text-xs text-orange-400 hover:text-orange-300 transition-colors">{currentLanguage === 'zh' ? '查看文档 →' : 'View Docs →'}</Link>
+                </div>
+              </div>
+            )}
+          </div>
           {/* <Link
             to="/workflow"
             className="text-sm text-gray-300 hover:text-white transition-colors flex items-center px-3 py-2"

@@ -18,7 +18,8 @@ import {
   Play,
   Loader2,
   Clock,
-  Film
+  Film,
+  Share2
 } from 'lucide-react';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
@@ -38,6 +39,73 @@ const isValidThumbnail = (url?: string | null): boolean => {
 
 // 功能类型定义
 type CreationType = 'text' | 'image' | 'video' | 'web' | 'mcp' | 'agent';
+type VideoRatio = '16:9' | '9:16' | '1:1';
+type ImageResolution = '1K' | '2K' | '4K';
+type ImageRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+
+const CREATOR_HUB_IMAGE_SIZE_CACHE_KEY = 'creatorHub_imageSize';
+const CREATOR_HUB_VIDEO_RATIO_CACHE_KEY = 'creatorHub_videoRatio';
+const CREATOR_HUB_VIDEO_GEN_CACHE_KEY = 'creatorHub_videoGen';
+
+const VALID_VIDEO_RATIOS = new Set<VideoRatio>(['16:9', '9:16', '1:1']);
+const VALID_IMAGE_RESOLUTIONS = new Set<ImageResolution>(['1K', '2K', '4K']);
+type VideoGenDuration = '5秒' | '10秒' | '15秒';
+const VALID_VIDEO_GEN_DURATIONS = new Set<VideoGenDuration>(['5秒', '10秒', '15秒']);
+const VALID_IMAGE_RATIOS = new Set<ImageRatio>(['16:9', '9:16', '1:1', '4:3', '3:4']);
+
+const loadCachedVideoRatio = (): VideoRatio => {
+  try {
+    const cached = localStorage.getItem(CREATOR_HUB_VIDEO_RATIO_CACHE_KEY);
+    if (cached && VALID_VIDEO_RATIOS.has(cached as VideoRatio)) {
+      return cached as VideoRatio;
+    }
+  } catch (error) {
+    console.error('读取 CreatorHub 视频比例缓存失败:', error);
+  }
+  return '16:9';
+};
+
+type CachedVideoGen = {
+  resolution: ImageResolution;
+  duration: VideoGenDuration;
+  modelId: string;
+};
+
+const loadCachedVideoGen = (): CachedVideoGen => {
+  try {
+    const cached = localStorage.getItem(CREATOR_HUB_VIDEO_GEN_CACHE_KEY);
+    if (!cached) {
+      return { resolution: '2K', duration: '5秒', modelId: '' };
+    }
+    const parsed = JSON.parse(cached);
+    const resolution = VALID_IMAGE_RESOLUTIONS.has(parsed?.resolution) ? parsed.resolution : '2K';
+    const duration = VALID_VIDEO_GEN_DURATIONS.has(parsed?.duration)
+      ? parsed.duration
+      : '5秒';
+    const modelId = typeof parsed?.modelId === 'string' ? parsed.modelId : '';
+    return { resolution, duration, modelId };
+  } catch (error) {
+    console.error('读取 CreatorHub 视频生成偏好缓存失败:', error);
+  }
+  return { resolution: '2K', duration: '5秒', modelId: '' };
+};
+
+const loadCachedImageSize = (): { resolution: ImageResolution; ratio: ImageRatio } => {
+  try {
+    const cached = localStorage.getItem(CREATOR_HUB_IMAGE_SIZE_CACHE_KEY);
+    if (!cached) {
+      return { resolution: '1K', ratio: '1:1' };
+    }
+
+    const parsed = JSON.parse(cached);
+    const resolution = VALID_IMAGE_RESOLUTIONS.has(parsed?.resolution) ? parsed.resolution : '1K';
+    const ratio = VALID_IMAGE_RATIOS.has(parsed?.ratio) ? parsed.ratio : '1:1';
+    return { resolution, ratio };
+  } catch (error) {
+    console.error('读取 CreatorHub 图片尺寸缓存失败:', error);
+  }
+  return { resolution: '1K', ratio: '1:1' };
+};
 
 interface CreationOption {
   type: CreationType;
@@ -562,6 +630,11 @@ export const CreatorHubPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentLanguage } = useLanguage();
+  const videoGenBootstrapRef = useRef<CachedVideoGen | null>(null);
+  if (videoGenBootstrapRef.current === null) {
+    videoGenBootstrapRef.current = loadCachedVideoGen();
+  }
+  const persistedVideoModelIdRef = useRef<string>(videoGenBootstrapRef.current.modelId);
   const [selectedType, setSelectedType] = useState<CreationType>('text');
   const [backgroundLoaded, setBackgroundLoaded] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -573,12 +646,13 @@ export const CreatorHubPage: React.FC = () => {
   const [videoLastFrame, setVideoLastFrame] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
+  const cachedImageSize = loadCachedImageSize();
   // 视频/图片分辨率和比例
-  const [videoResolution, setVideoResolution] = useState<'1K' | '2K' | '4K'>('2K');
-  const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
-  const [videoDuration, setVideoDuration] = useState<'5秒' | '10秒' | '15秒'>('5秒');
-  const [imageResolution, setImageResolution] = useState<'1K' | '2K' | '4K'>('1K');
-  const [imageRatio, setImageRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3' | '3:4'>('1:1');
+  const [videoResolution, setVideoResolution] = useState<'1K' | '2K' | '4K'>(videoGenBootstrapRef.current.resolution);
+  const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>(() => loadCachedVideoRatio());
+  const [videoDuration, setVideoDuration] = useState<'5秒' | '10秒' | '15秒'>(videoGenBootstrapRef.current.duration);
+  const [imageResolution, setImageResolution] = useState<'1K' | '2K' | '4K'>(cachedImageSize.resolution);
+  const [imageRatio, setImageRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3' | '3:4'>(cachedImageSize.ratio);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const firstFrameInputRef = useRef<HTMLInputElement>(null);
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
@@ -597,6 +671,7 @@ export const CreatorHubPage: React.FC = () => {
   const [isCreatingSimilar, setIsCreatingSimilar] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [isNavbarTransparent, setIsNavbarTransparent] = useState(true);
+  const sharedShowcaseTriedIdsRef = useRef<Set<number>>(new Set());
 
   // 监听滚动，控制导航栏透明度
   useEffect(() => {
@@ -650,6 +725,43 @@ export const CreatorHubPage: React.FC = () => {
     loadModels();
   }, [loadModels]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CREATOR_HUB_VIDEO_RATIO_CACHE_KEY, videoRatio);
+    } catch (error) {
+      console.error('保存 CreatorHub 视频比例缓存失败:', error);
+    }
+  }, [videoRatio]);
+
+  useEffect(() => {
+    if (selectedType === 'video' && selectedModel) {
+      persistedVideoModelIdRef.current = selectedModel;
+    }
+    try {
+      localStorage.setItem(
+        CREATOR_HUB_VIDEO_GEN_CACHE_KEY,
+        JSON.stringify({
+          resolution: videoResolution,
+          duration: videoDuration,
+          modelId: persistedVideoModelIdRef.current
+        })
+      );
+    } catch (error) {
+      console.error('保存 CreatorHub 视频生成偏好缓存失败:', error);
+    }
+  }, [videoResolution, videoDuration, selectedModel, selectedType]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        CREATOR_HUB_IMAGE_SIZE_CACHE_KEY,
+        JSON.stringify({ resolution: imageResolution, ratio: imageRatio })
+      );
+    } catch (error) {
+      console.error('保存 CreatorHub 图片尺寸缓存失败:', error);
+    }
+  }, [imageResolution, imageRatio]);
+
   // 加载分类列表
   const loadCategories = useCallback(async () => {
     try {
@@ -700,6 +812,85 @@ export const CreatorHubPage: React.FC = () => {
     }
   }, [selectedCategory, showcasePageSize, searchKeyword]);
 
+  const syncShowcaseShareParam = useCallback((showcaseId?: number) => {
+    const params = new URLSearchParams(location.search);
+    if (showcaseId != null) {
+      params.set('showcaseId', String(showcaseId));
+    } else {
+      params.delete('showcaseId');
+    }
+    const search = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: search ? `?${search}` : ''
+      },
+      { replace: true }
+    );
+  }, [location.pathname, location.search, navigate]);
+
+  const closeDetailModal = useCallback(() => {
+    setShowDetailModal(false);
+    syncShowcaseShareParam(undefined);
+  }, [syncShowcaseShareParam]);
+
+  const handleOpenShowcaseDetail = useCallback((item: ShowcaseContent, options?: { incrementView?: boolean; syncUrl?: boolean }) => {
+    const shouldIncrementView = options?.incrementView ?? true;
+    const shouldSyncUrl = options?.syncUrl ?? true;
+
+    if (shouldIncrementView) {
+      const updatedItem = { ...item, viewCount: (item.viewCount || 0) + 1 };
+      setShowcaseList(prev => prev.map(i => i.id === item.id ? updatedItem : i));
+      setSelectedShowcase(updatedItem);
+      setShowDetailModal(true);
+
+      showcaseApi.incrementViewCount(item.id).catch(error => {
+        console.error('更新浏览数失败:', error);
+        // 如果失败，回滚本地数据
+        setShowcaseList(prev => prev.map(i => i.id === item.id ? item : i));
+        setSelectedShowcase(prev => (prev?.id === item.id ? item : prev));
+      });
+    } else {
+      setSelectedShowcase(item);
+      setShowDetailModal(true);
+    }
+
+    if (shouldSyncUrl) {
+      syncShowcaseShareParam(item.id);
+    }
+  }, [syncShowcaseShareParam]);
+
+  const handleShareShowcase = useCallback(async () => {
+    if (!selectedShowcase) return;
+
+    const shareUrl = new URL(window.location.href);
+    shareUrl.searchParams.set('showcaseId', String(selectedShowcase.id));
+    const finalUrl = shareUrl.toString();
+
+    // 优先使用系统分享
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: selectedShowcase.title,
+          text: currentLanguage === 'zh' ? '我在 AIGC 内容社区发现了这个作品，分享给你：' : 'Check out this AIGC content:',
+          url: finalUrl
+        });
+        return;
+      } catch (error: any) {
+        // 用户取消分享不提示错误
+        if (error?.name === 'AbortError') return;
+      }
+    }
+
+    // 回退到复制链接
+    try {
+      await navigator.clipboard.writeText(finalUrl);
+      toast.success(currentLanguage === 'zh' ? '分享链接已复制' : 'Share link copied');
+    } catch {
+      window.prompt(currentLanguage === 'zh' ? '复制下面链接进行分享：' : 'Copy this link to share:', finalUrl);
+    }
+  }, [selectedShowcase, currentLanguage]);
+
   // 初始加载分类和内容
   useEffect(() => {
     loadCategories();
@@ -708,6 +899,57 @@ export const CreatorHubPage: React.FC = () => {
   useEffect(() => {
     loadShowcaseList(1);
   }, [selectedCategory]);
+
+  // 通过分享链接自动打开指定内容（示例：?showcaseId=123）
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const sharedIdRaw = params.get('showcaseId');
+    if (!sharedIdRaw) return;
+
+    const sharedId = Number(sharedIdRaw);
+    if (!Number.isFinite(sharedId) || sharedId <= 0) return;
+
+    if (showDetailModal && selectedShowcase?.id === sharedId) return;
+
+    const target = showcaseList.find(item => item.id === sharedId);
+    if (target) {
+      handleOpenShowcaseDetail(target, { incrementView: false, syncUrl: false });
+      return;
+    }
+
+    if (sharedShowcaseTriedIdsRef.current.has(sharedId)) return;
+    sharedShowcaseTriedIdsRef.current.add(sharedId);
+
+    let cancelled = false;
+    const tryLoadSharedItem = async () => {
+      try {
+        const response = await showcaseApi.getShowcaseList({
+          pageNum: 1,
+          pageSize: 1,
+          status: '0',
+          id: sharedId
+        } as any);
+        const rows = response.rows || [];
+        const matched = rows.find(item => item.id === sharedId);
+        if (!cancelled && matched) {
+          setShowcaseList(prev => prev.some(item => item.id === matched.id) ? prev : [matched, ...prev]);
+          handleOpenShowcaseDetail(matched, { incrementView: false, syncUrl: false });
+        } else if (!cancelled) {
+          toast.error(currentLanguage === 'zh' ? '分享内容不存在或已下架' : 'Shared content not found');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('加载分享内容失败:', error);
+          toast.error(currentLanguage === 'zh' ? '加载分享内容失败' : 'Failed to load shared content');
+        }
+      }
+    };
+
+    tryLoadSharedItem();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.search, showcaseList, showDetailModal, selectedShowcase?.id, handleOpenShowcaseDetail, currentLanguage]);
 
   // 无限滚动：监听滚动事件
   useEffect(() => {
@@ -744,12 +986,20 @@ export const CreatorHubPage: React.FC = () => {
     });
   }, [models, selectedType]);
 
-  // 当过滤后的模型列表变化时，自动选择第一个
+  // 当过滤后的模型列表变化时：优先恢复视频模式缓存的模型，否则默认选第一个
   useEffect(() => {
-    if (filteredModels.length > 0 && !filteredModels.find(m => m.id === selectedModel)) {
-      setSelectedModel(filteredModels[0].id);
+    if (filteredModels.length === 0) return;
+    if (filteredModels.some(m => m.id === selectedModel)) return;
+
+    let nextId = filteredModels[0].id;
+    if (selectedType === 'video') {
+      const mid = persistedVideoModelIdRef.current;
+      if (mid && filteredModels.some(m => m.id === mid)) {
+        nextId = mid;
+      }
     }
-  }, [filteredModels, selectedModel]);
+    setSelectedModel(nextId);
+  }, [filteredModels, selectedModel, selectedType]);
 
   // 获取当前选中的功能配置
   const currentOption = creationOptions.find(o => o.type === selectedType)!;
@@ -902,6 +1152,7 @@ export const CreatorHubPage: React.FC = () => {
               size: resolutionMap[videoResolution] || '720P',
               ratio: videoRatio,
               duration: videoDuration,
+              audio: true,
               mode: 'video', // 标记为视频模式
               autoSubmit: true // 标记为自动提交
             }
@@ -1509,24 +1760,7 @@ export const CreatorHubPage: React.FC = () => {
                   <div
                     key={item.id}
                     className="break-inside-avoid bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer"
-                    onClick={() => {
-                      // 立即在本地更新浏览数
-                      const updatedItem = { ...item, viewCount: (item.viewCount || 0) + 1 };
-                      setShowcaseList(prev => 
-                        prev.map(i => i.id === item.id ? updatedItem : i)
-                      );
-                      setSelectedShowcase(updatedItem);
-                      setShowDetailModal(true);
-                      
-                      // 异步调用接口更新服务器数据
-                      showcaseApi.incrementViewCount(item.id).catch(error => {
-                        console.error('更新浏览数失败:', error);
-                        // 如果失败，回滚本地数据
-                        setShowcaseList(prev => 
-                          prev.map(i => i.id === item.id ? item : i)
-                        );
-                      });
-                    }}
+                    onClick={() => handleOpenShowcaseDetail(item, { incrementView: true, syncUrl: true })}
                   >
                     {/* 缩略图 - 自适应高度 */}
                     <div className="bg-gray-900 relative overflow-hidden">
@@ -1746,7 +1980,7 @@ export const CreatorHubPage: React.FC = () => {
       {showDetailModal && selectedShowcase && (
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setShowDetailModal(false)}
+          onClick={closeDetailModal}
         >
           <div 
             className="bg-[#1a1a1a] rounded-2xl border border-gray-800 max-w-7xl w-full max-h-[90vh] overflow-hidden flex flex-col"
@@ -1758,7 +1992,7 @@ export const CreatorHubPage: React.FC = () => {
                 {selectedShowcase.title}
               </h2>
               <button
-                onClick={() => setShowDetailModal(false)}
+                onClick={closeDetailModal}
                 className="w-10 h-10 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0"
               >
                 <X className="w-5 h-5 text-gray-300" />
@@ -1953,10 +2187,10 @@ export const CreatorHubPage: React.FC = () => {
                                 href={appUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/20 text-green-400 text-xs rounded-lg hover:bg-green-500/30 transition-colors"
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-lg shadow-lg shadow-green-500/25 ring-1 ring-green-300/40 hover:bg-green-400 transition-all"
                               >
-                                <Globe className="w-3.5 h-3.5" />
-                                {currentLanguage === 'zh' ? '新窗口打开' : 'Open in New Tab'}
+                                <Maximize2 className="w-4 h-4" />
+                                {currentLanguage === 'zh' ? '↗ 新窗口打开查看' : '↗ Open in New Tab'}
                               </a>
                             </div>
                           </>
@@ -2124,6 +2358,13 @@ export const CreatorHubPage: React.FC = () => {
                   <Eye className="w-4 h-4 text-blue-400" />
                   <span className="text-sm text-gray-300">{selectedShowcase.viewCount || 0}</span>
                 </div>
+                <button
+                  onClick={handleShareShowcase}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300"
+                >
+                  <Share2 className="w-4 h-4 text-cyan-400" />
+                  <span className="text-sm">{currentLanguage === 'zh' ? '分享' : 'Share'}</span>
+                </button>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -2198,7 +2439,7 @@ export const CreatorHubPage: React.FC = () => {
                         });
                       }
                       
-                      setShowDetailModal(false);
+                      closeDetailModal();
                     } catch (error) {
                       console.error('创建同款失败:', error);
                       toast.error(currentLanguage === 'zh' ? '创建同款失败' : 'Failed to create similar');
@@ -2222,7 +2463,7 @@ export const CreatorHubPage: React.FC = () => {
                   )}
                 </button>
                 <button
-                  onClick={() => setShowDetailModal(false)}
+                  onClick={closeDetailModal}
                   className="px-6 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors"
                 >
                   {currentLanguage === 'zh' ? '关闭' : 'Close'}

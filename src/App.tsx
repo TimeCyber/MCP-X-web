@@ -34,6 +34,8 @@ const ImageViewerPage     = lazy(() => import('./pages/ImageViewerPage').then(m 
 const WorkflowBuilderPage = lazy(() => import('./pages/WorkflowBuilderPage').then(m => ({ default: m.WorkflowBuilderPage })));
 const ImageEditorPage     = lazy(() => import('./pages/ImageEditorPage'));
 const VideoGenPage        = lazy(() => import('./pages/VideoGenPage'));
+const SkillPage           = lazy(() => import('./pages/SkillPage'));
+const SkillDetailPage     = lazy(() => import('./pages/SkillDetailPage'));
 
 function App() {
   return (
@@ -73,6 +75,8 @@ function App() {
               <Route path="/image-editor"            element={<ImageEditorPage />} />
               <Route path="/workflow"                element={<WorkflowBuilderPage />} />
               <Route path="/video-studio"            element={<VideoGenPage />} />
+              <Route path="/skill"                   element={<SkillPage />} />
+              <Route path="/skill/:id"               element={<SkillDetailPage />} />
             </Routes>
           </Suspense>
         </Router>

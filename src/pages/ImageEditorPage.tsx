@@ -19,6 +19,85 @@ import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
 const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+const IMAGE_SIZE_CACHE_KEY = 'imageEditor_selectedImageSize';
+const VIDEO_RATIO_CACHE_KEY = 'imageEditor_videoRatio';
+const IMAGE_EDITOR_VIDEO_GEN_CACHE_KEY = 'imageEditor_videoGen';
+const DEFAULT_IMAGE_SIZE = { width: 1024, height: 1024 };
+const VALID_VIDEO_RATIOS = new Set(['16:9', '9:16', '1:1']);
+
+type VideoGenResolution = '480P' | '720P' | '1080P';
+const VALID_VIDEO_GEN_RESOLUTIONS = new Set<VideoGenResolution>(['480P', '720P', '1080P']);
+const VALID_VIDEO_GEN_DURATIONS = new Set([3, 5, 8, 10, 15]);
+
+type CachedImageEditorVideoGen = {
+  resolution: VideoGenResolution;
+  duration: number;
+  modelName: string;
+};
+
+const loadCachedImageEditorVideoGen = (): CachedImageEditorVideoGen => {
+  try {
+    const cached = localStorage.getItem(IMAGE_EDITOR_VIDEO_GEN_CACHE_KEY);
+    if (!cached) {
+      return { resolution: '1080P', duration: 10, modelName: '' };
+    }
+    const parsed = JSON.parse(cached);
+    const resolution = VALID_VIDEO_GEN_RESOLUTIONS.has(parsed?.resolution)
+      ? parsed.resolution
+      : '1080P';
+    const rawDur = Number(parsed?.duration);
+    const duration = VALID_VIDEO_GEN_DURATIONS.has(rawDur) ? rawDur : 10;
+    const modelName = typeof parsed?.modelName === 'string' ? parsed.modelName : '';
+    return { resolution, duration, modelName };
+  } catch (error) {
+    console.error('读取图片编辑器视频生成偏好缓存失败:', error);
+  }
+  return { resolution: '1080P', duration: 10, modelName: '' };
+};
+
+const loadCachedImageSize = (): { width: number; height: number } => {
+  try {
+    const cached = localStorage.getItem(IMAGE_SIZE_CACHE_KEY);
+    if (!cached) return DEFAULT_IMAGE_SIZE;
+    const parsed = JSON.parse(cached);
+    if (
+      parsed &&
+      typeof parsed.width === 'number' &&
+      typeof parsed.height === 'number' &&
+      parsed.width > 0 &&
+      parsed.height > 0
+    ) {
+      return { width: parsed.width, height: parsed.height };
+    }
+  } catch (error) {
+    console.error('读取图片尺寸缓存失败:', error);
+  }
+  return DEFAULT_IMAGE_SIZE;
+};
+
+const loadCachedVideoRatio = (): '16:9' | '9:16' | '1:1' => {
+  try {
+    const cached = localStorage.getItem(VIDEO_RATIO_CACHE_KEY);
+    if (cached && VALID_VIDEO_RATIOS.has(cached)) {
+      return cached as '16:9' | '9:16' | '1:1';
+    }
+  } catch (error) {
+    console.error('读取视频比例缓存失败:', error);
+  }
+  return '16:9';
+};
+
+const getVideoPlaceholderSize = (ratio: '16:9' | '9:16' | '1:1'): { width: number; height: number } => {
+  switch (ratio) {
+    case '9:16':
+      return { width: 225, height: 400 };
+    case '1:1':
+      return { width: 320, height: 320 };
+    case '16:9':
+    default:
+      return { width: 400, height: 225 };
+  }
+};
 
 const getElementBounds = (element: Element, allElements: Element[] = []): { x: number; y: number; width: number; height: number } => {
   if (element.type === 'group') {
@@ -846,17 +925,23 @@ const ImageEditorPage: React.FC = () => {
   const lassoPathRef = useRef<Point[]>([]); // 用于在事件处理中获取最新的套索路径
   const [lassoElementId, setLassoElementId] = useState<string | null>(null);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number }>({ width: 1024, height: 1024 });
+  const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number }>(() => loadCachedImageSize());
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [showVipModal, setShowVipModal] = useState(false);
+
+  const videoGenBootstrapRef = useRef<CachedImageEditorVideoGen | null>(null);
+  if (videoGenBootstrapRef.current === null) {
+    videoGenBootstrapRef.current = loadCachedImageEditorVideoGen();
+  }
+  const persistedVideoModelNameRef = useRef(videoGenBootstrapRef.current.modelName);
 
   // 图生视频相关状态
   const [showInlineVideoControls, setShowInlineVideoControls] = useState(false);
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
-  const [selectedVideoModel, setSelectedVideoModel] = useState<string>('');
-  const [videoResolution, setVideoResolution] = useState<'480P' | '720P' | '1080P'>('1080P');
-  const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
-  const [videoDuration, setVideoDuration] = useState<number>(10);
+  const [selectedVideoModel, setSelectedVideoModel] = useState<string>(videoGenBootstrapRef.current.modelName);
+  const [videoResolution, setVideoResolution] = useState<'480P' | '720P' | '1080P'>(videoGenBootstrapRef.current.resolution);
+  const [videoRatio, setVideoRatio] = useState<'16:9' | '9:16' | '1:1'>(() => loadCachedVideoRatio());
+  const [videoDuration, setVideoDuration] = useState<number>(videoGenBootstrapRef.current.duration);
   /** 底部视频参数：与模型选择器一致的下拉（分辨率 / 比例 / 时长） */
   const [openVideoParamMenu, setOpenVideoParamMenu] = useState<null | 'resolution' | 'ratio' | 'duration'>(null);
   const [videoPrompt, setVideoPrompt] = useState<string>('');
@@ -884,6 +969,7 @@ const ImageEditorPage: React.FC = () => {
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const videoParamsBarRef = useRef<HTMLDivElement>(null);
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
+  const promptOverlayRef = useRef<HTMLDivElement>(null);
 
   // 同步pan值到ref，避免闭包问题
   useEffect(() => {
@@ -916,6 +1002,43 @@ const ImageEditorPage: React.FC = () => {
       setHoveredElementId(null);
     };
   }, []);
+
+  // 记录图片生成尺寸到本地缓存，下次进入编辑器沿用上次设置
+  useEffect(() => {
+    try {
+      localStorage.setItem(IMAGE_SIZE_CACHE_KEY, JSON.stringify(selectedImageSize));
+    } catch (error) {
+      console.error('保存图片尺寸缓存失败:', error);
+    }
+  }, [selectedImageSize]);
+
+  // 记录视频生成比例到本地缓存，下次进入编辑器沿用上次设置
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIDEO_RATIO_CACHE_KEY, videoRatio);
+    } catch (error) {
+      console.error('保存视频比例缓存失败:', error);
+    }
+  }, [videoRatio]);
+
+  // 记录视频生成模型、分辨率、时长到本地缓存
+  useEffect(() => {
+    if (selectedVideoModel) {
+      persistedVideoModelNameRef.current = selectedVideoModel;
+    }
+    try {
+      localStorage.setItem(
+        IMAGE_EDITOR_VIDEO_GEN_CACHE_KEY,
+        JSON.stringify({
+          resolution: videoResolution,
+          duration: videoDuration,
+          modelName: persistedVideoModelNameRef.current
+        })
+      );
+    } catch (error) {
+      console.error('保存图片编辑器视频生成偏好缓存失败:', error);
+    }
+  }, [videoResolution, videoDuration, selectedVideoModel]);
 
   // 构建所有可用的媒体元素列表（从 session messages + 画布元素），供 @功能 和粘贴解析共用
   const buildAllMediaElements = useCallback((): Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> => {
@@ -1394,14 +1517,24 @@ const ImageEditorPage: React.FC = () => {
           model.category === 'text2video'
         );
         setVideoModels(vidModels);
-        if (vidModels.length > 0 && !selectedVideoModel) {
-          setSelectedVideoModel(vidModels[0].modelName);
-        }
       }
     } catch (error) {
       console.error('Failed to load video models:', error);
     }
-  }, [selectedVideoModel]);
+  }, []);
+
+  // 视频模型加载后：校验当前选择在列表内，否则优先用缓存模型名再用列表第一项
+  useEffect(() => {
+    if (videoModels.length === 0) return;
+    if (videoModels.some((m) => m.modelName === selectedVideoModel)) return;
+
+    const persisted = persistedVideoModelNameRef.current;
+    let nextName = videoModels[0].modelName;
+    if (persisted && videoModels.some((m) => m.modelName === persisted)) {
+      nextName = persisted;
+    }
+    setSelectedVideoModel(nextName);
+  }, [videoModels, selectedVideoModel]);
 
   // 用户效果管理
   const handleAddUserEffect = useCallback((effect: UserEffect) => {
@@ -1584,15 +1717,16 @@ const ImageEditorPage: React.FC = () => {
         };
       }
 
-      // 创建空白视频占位元素
+      // 创建空白视频占位元素（按比例展示预留框）
+      const placeholderSize = getVideoPlaceholderSize((state.ratio as '16:9' | '9:16' | '1:1') || '16:9');
       videoElementId = generateId();
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
         x: startImageElement ? 50 : 100,
         y: startImageElement ? startImageElement.y + startImageElement.height + 50 : 100,
-        width: 400,
-        height: 225, // 16:9比例
+        width: placeholderSize.width,
+        height: placeholderSize.height,
         videoUrl: undefined, // 占位，还没有视频URL
         href: undefined,
         visible: true,
@@ -1630,10 +1764,11 @@ const ImageEditorPage: React.FC = () => {
         state.size || '720P', // 分辨率尺寸
         state.ratio || '16:9',
         duration,
-        undefined, // sessionId
+        currentSessionId, // sessionId，确保结果归档到当前画布会话
         (progress: any) => {
           setVideoProgress(progress);
-        }
+        },
+        state.audio ?? true // 默认开启音频；CreatorHub 可显式传入 audio
       );
 
       if (result.videoUrl) {
@@ -1727,7 +1862,7 @@ const ImageEditorPage: React.FC = () => {
     } finally {
       setIsGeneratingVideo(false);
     }
-  }, []);
+  }, [currentSessionId, selectedVideoModel, saveToHistory]);
 
   // 自动提交功能 - 从 CreatorHubPage 跳转过来时自动生成图片或视频
   useEffect(() => {
@@ -1797,301 +1932,227 @@ const ImageEditorPage: React.FC = () => {
     }
   }, [location.state, isInitialized]);
 
-  // 检查用户登录状态并初始化 Boards（优先从缓存加载，否则从后端加载 sessions）
+  // 检查用户登录状态并初始化 Boards（优先渲染当前画板缓存，再异步同步 session 列表）
   useEffect(() => {
     const userId = localStorage.getItem('userId');
     const token = localStorage.getItem('token');
 
     if (!userId || !token) {
       toast.error('请先登录后再使用图片编辑功能');
-      // 延迟跳转到登录页面
       setTimeout(() => {
         window.location.href = '/login';
       }, 2000);
       return;
     }
 
-    // 恢复图片和视频元素的对象
-    const restoreBoardImages = async (boardsData: Board[]): Promise<Board[]> => {
-      const restoredBoards: Board[] = [];
-      for (const board of boardsData) {
-        const restoredElements = await Promise.all(board.elements.map(async (el) => {
-          // 恢复图片元素
-          if (el.type === 'image' && el.href && !el.image) {
-            return new Promise<Element>((resolve) => {
-              const img = new Image();
-              img.onload = () => resolve({ ...el, image: img });
-              img.onerror = () => resolve(el);
-              img.src = el.href || '';
-            });
-          }
-          // 恢复视频元素
-          if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
-            const videoEl = el as VideoElement;
-            return new Promise<Element>((resolve) => {
-              const video = document.createElement('video');
-              video.crossOrigin = 'anonymous';
-              video.preload = 'auto';
-              video.muted = true;
-              video.playsInline = true;
-              
-              // 超时保护：5秒后如果还没加载完成，直接返回元素（无封面）
-              const timer = setTimeout(() => {
-                console.warn('视频封面加载超时:', videoEl.videoUrl?.substring(0, 80));
-                resolve({ ...videoEl, video: video, isPlaying: false });
-              }, 5000);
+    let cancelled = false;
 
-              video.onseeked = () => {
-                clearTimeout(timer);
-                resolve({ ...videoEl, video: video, isPlaying: false });
-              };
-
-              video.onloadeddata = () => {
-                // loadeddata 表示有足够数据渲染第一帧，此时 seek 到 0.1s
-                video.currentTime = 0.1;
-              };
-              
-              video.onerror = () => {
-                clearTimeout(timer);
-                // 即使加载失败也返回元素
-                resolve(videoEl);
-              };
-              
-              video.src = videoEl.videoUrl || '';
-              video.load();
-            });
-          }
-          return el;
-        }));
-        restoredBoards.push({ ...board, elements: restoredElements });
-      }
-      return restoredBoards;
+    const pickBoardByCachedId = (list: Board[], cachedId: string | null): Board => {
+      if (!cachedId) return list[0];
+      return list.find(b => b.id === cachedId || b.sessionId === cachedId) || list[0];
     };
 
-    // 初始化 Boards
-    const initBoards = async () => {
-      // 1. 优先从 localStorage 缓存加载并立即显示
-      const cachedBoards = loadBoardsFromCache();
-      const cachedCurrentBoardId = loadCurrentBoardIdFromCache();
-
-      if (cachedBoards && cachedBoards.length > 0) {
-        console.log('✅ 使用 localStorage 缓存的画板数据，立即显示');
-        // 恢复图片元素的 Image 对象
-        const restoredBoards = await restoreBoardImages(cachedBoards);
-        setBoards(restoredBoards);
-
-        // 恢复当前选中的 board
-        const targetBoardId = cachedCurrentBoardId && restoredBoards.find(b => b.id === cachedCurrentBoardId)
-          ? cachedCurrentBoardId
-          : restoredBoards[0].id;
-
-        setCurrentBoardId(targetBoardId);
-        const targetBoard = restoredBoards.find(b => b.id === targetBoardId);
-        setCurrentSessionId(targetBoard?.sessionId);
-        setElements(targetBoard ? [...targetBoard.elements] : []);
-        setIsInitialized(true);
-        
-        // 后台静默同步服务端数据（不阻塞UI）
-        syncFromServer(restoredBoards);
-        return;
-      }
-
-      // 2. 缓存不存在，从后端加载 sessions
-      console.log('缓存不存在，从后端加载画板数据');
-      await loadFromServer();
-      setIsInitialized(true);
+    // 合并异步加载结果与本地新增元素，避免占位符被后到达的数据覆盖
+    const mergeElementsKeepLocal = (incoming: Element[], localCurrent: Element[]): Element[] => {
+      const incomingIds = new Set(incoming.map(item => item.id));
+      const localOnly = localCurrent.filter(item => !incomingIds.has(item.id));
+      return [...incoming, ...localOnly];
     };
 
-    // 后台静默同步服务端数据
-    const syncFromServer = async (currentBoards: Board[]) => {
-      try {
-        console.log('🌐 后台同步服务端数据...');
-        const response = await chatApi.getSessionList(userId, 'mcpx-text2image');
-
-        if (response.code === 200 && response.rows && response.rows.length > 0) {
-          // 检查是否有新的 session 需要添加
-          const existingSessionIds = new Set(currentBoards.map(b => b.sessionId).filter(Boolean));
-          let hasNewBoards = false;
-          
-          for (const session of response.rows) {
-            const sessionId = session.id?.toString() || session.id;
-            if (!existingSessionIds.has(sessionId)) {
-              hasNewBoards = true;
-              break;
-            }
-          }
-          
-          // 检查已有 board 中是否有 elements 为空的（缓存残缺场景）
-          const hasEmptyBoards = currentBoards.some(b => !b.elements || b.elements.length === 0);
-          
-          if (hasNewBoards || hasEmptyBoards) {
-            console.log('📥 发现新的服务端数据或存在空画板，更新画板列表');
-            const loadedBoards: Board[] = [];
-
-            for (const session of response.rows) {
-              const sessionId = session.id?.toString() || session.id;
-              const boardName = session.sessionTitle || `Board ${loadedBoards.length + 1}`;
-              
-              // 检查本地是否已有该 board 且 elements 不为空
-              const existingBoard = currentBoards.find(b => b.sessionId === sessionId);
-              if (existingBoard && existingBoard.elements && existingBoard.elements.length > 0) {
-                // 本地有数据，直接复用
-                loadedBoards.push(existingBoard);
-              } else {
-                // 新 board 或本地 elements 为空，从服务端重新加载
-                console.log(`重新从服务端加载画板 ${boardName} (${sessionId})`);
-                const imageElements = await loadSessionImages(sessionId);
-                loadedBoards.push({
-                  id: sessionId,
-                  name: boardName,
-                  elements: imageElements,
-                  sessionId: sessionId
-                });
-              }
-            }
-
-            if (loadedBoards.length > 0) {
-              setBoards(loadedBoards);
-              saveBoardsToCache(loadedBoards);
-              // 仅当当前画布为空时才用服务端数据覆盖，避免覆盖已加载的视频封面等运行时对象
-              const currentBoardIdSnap = loadCurrentBoardIdFromCache();
-              const reloadedCurrent = loadedBoards.find(b => b.id === currentBoardIdSnap || b.sessionId === currentBoardIdSnap);
-              if (reloadedCurrent && reloadedCurrent.elements.length > 0) {
-                setElements(prev => {
-                  // 如果当前画布已有元素（从缓存恢复的），不覆盖
-                  if (prev.length > 0) {
-                    console.log('✅ 当前画布已有元素，跳过服务端覆盖');
-                    return prev;
-                  }
-                  console.log('✅ 当前画布为空，使用服务端数据，元素数:', reloadedCurrent.elements.length);
-                  return [...reloadedCurrent.elements];
-                });
-              }
-              console.log('✅ 服务端数据同步完成');
-            }
-          } else {
-            console.log('✅ 本地数据已是最新');
-          }
-        }
-      } catch (error) {
-        console.warn('后台同步服务端数据失败，保持本地数据:', error);
-        // 失败时不影响已显示的本地数据
-      }
-    };
-
-    // 从服务端加载数据（无缓存时使用）
-    const loadFromServer = async () => {
-      try {
-        // 根据 appId 查询 sessionList
-        const response = await chatApi.getSessionList(userId, 'mcpx-text2image');
-
-        if (response.code === 200 && response.rows && response.rows.length > 0) {
-          // 第一步：立即创建所有 boards（空元素），显示 UI
-          const loadedBoards: Board[] = response.rows.map((session: any, index: number) => {
-            const sessionId = session.id?.toString() || session.id;
-            const boardName = session.sessionTitle || `Board ${index + 1}`;
-            
-            return {
-              id: sessionId,
-              name: boardName,
-              elements: [], // 先创建空元素数组
-              sessionId: sessionId,
-              isLoading: true // 标记为加载中
-            };
+    // 只恢复单个画板，避免等待全部画板资源加载
+    const restoreBoardElements = async (board: Board): Promise<Board> => {
+      const restoredElements = await Promise.all(board.elements.map(async (el) => {
+        if (el.type === 'image' && el.href && !el.image) {
+          return new Promise<Element>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve({ ...el, image: img });
+            img.onerror = () => resolve(el);
+            img.src = el.href || '';
           });
+        }
+        if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
+          const videoEl = el as VideoElement;
+          return new Promise<Element>((resolve) => {
+            const video = document.createElement('video');
+            video.crossOrigin = 'anonymous';
+            video.preload = 'auto';
+            video.muted = true;
+            video.playsInline = true;
 
-          // 立即设置 boards 和显示第一个 board
-          setBoards(loadedBoards);
-          setCurrentBoardId(loadedBoards[0].id);
-          setCurrentSessionId(loadedBoards[0].sessionId || '');
-          setElements([]);
-          console.log('创建了', loadedBoards.length, '个画板，开始加载图片...');
+            const timer = setTimeout(() => {
+              console.warn('视频封面加载超时:', videoEl.videoUrl?.substring(0, 80));
+              resolve({ ...videoEl, video, isPlaying: false });
+            }, 5000);
 
-          // 第二步：优先加载第一个 board 的图片
-          const firstBoardImages = await loadSessionImages(loadedBoards[0].sessionId || '');
-          
-          // 更新第一个 board 的元素
-          const updatedBoards = [...loadedBoards];
-          updatedBoards[0] = {
-            ...updatedBoards[0],
-            elements: firstBoardImages,
-            isLoading: false
-          };
-          
-          setBoards(updatedBoards);
-          setElements([...firstBoardImages]);
-          saveBoardsToCache(updatedBoards);
-          saveCurrentBoardIdToCache(updatedBoards[0].id);
-          console.log('第一个画板加载完成，包含', firstBoardImages.length, '个元素');
+            video.onseeked = () => {
+              clearTimeout(timer);
+              resolve({ ...videoEl, video, isPlaying: false });
+            };
+            video.onloadeddata = () => {
+              video.currentTime = 0.1;
+            };
+            video.onerror = () => {
+              clearTimeout(timer);
+              resolve(videoEl);
+            };
 
-          // 第三步：后台异步加载其他 boards 的图片
-          if (loadedBoards.length > 1) {
-            console.log('开始后台加载其他', loadedBoards.length - 1, '个画板...');
-            
-            // 使用 Promise.all 并行加载，但不阻塞 UI
-            Promise.all(
-              loadedBoards.slice(1).map(async (board, idx) => {
-                try {
-                  const images = await loadSessionImages(board.sessionId || '');
-                  console.log(`后台加载画板 ${idx + 2}/${loadedBoards.length} 完成，包含 ${images.length} 个元素`);
-                  
-                  // 更新对应的 board
-                  setBoards(prev => {
-                    const updated = prev.map(b => 
-                      b.id === board.id 
-                        ? { ...b, elements: images, isLoading: false }
-                        : b
-                    );
-                    saveBoardsToCache(updated);
-                    return updated;
-                  });
-                } catch (error) {
-                  console.error(`加载画板 ${board.name} 失败:`, error);
-                  // 即使失败也标记为加载完成
-                  setBoards(prev => {
-                    const updated = prev.map(b => 
-                      b.id === board.id 
-                        ? { ...b, isLoading: false }
-                        : b
-                    );
-                    return updated;
-                  });
-                }
-              })
-            ).then(() => {
-              console.log('所有画板加载完成');
-            });
-          }
-        } else {
-          // 没有找到任何 session，创建默认的 Main Board
-          await createDefaultBoard();
+            video.src = videoEl.videoUrl || '';
+            video.load();
+          });
+        }
+        return el;
+      }));
+      return { ...board, elements: restoredElements };
+    };
+
+    // 只同步 session/list，不批量拉取全部 message/list
+    const syncBoardsMetaFromServer = async (baseBoards: Board[], preferredBoardId?: string) => {
+      try {
+        const response = await chatApi.getSessionList(userId, 'mcpx-text2image');
+        if (response.code !== 200 || !response.rows) return;
+
+        const bySessionId = new Map<string, Board>();
+        for (const board of baseBoards) {
+          if (board.sessionId) bySessionId.set(board.sessionId, board);
+        }
+
+        const serverBoards: Board[] = response.rows.map((session: any, index: number) => {
+          const sessionId = session.id?.toString() || session.id;
+          const boardName = session.sessionTitle || `Board ${index + 1}`;
+          const localBoard = bySessionId.get(sessionId);
+          return localBoard
+            ? { ...localBoard, id: sessionId, sessionId, name: boardName }
+            : { id: sessionId, sessionId, name: boardName, elements: [] };
+        });
+
+        const serverSessionIds = new Set(serverBoards.map(b => b.sessionId).filter(Boolean));
+        const localOnlyBoards = baseBoards.filter(b => !b.sessionId || !serverSessionIds.has(b.sessionId));
+        const mergedBoards = [...serverBoards, ...localOnlyBoards];
+        if (mergedBoards.length === 0) return;
+
+        const preferred = preferredBoardId || loadCurrentBoardIdFromCache();
+        const active = pickBoardByCachedId(mergedBoards, preferred);
+
+        if (cancelled) return;
+        setBoards(mergedBoards);
+        saveBoardsToCache(mergedBoards);
+        setCurrentBoardId(active.id);
+        saveCurrentBoardIdToCache(active.id);
+        if (active.sessionId) {
+          setCurrentSessionId(active.sessionId);
         }
       } catch (error) {
-        console.error('加载sessions失败:', error);
-        // 出错时创建默认的 Main Board
-        await createDefaultBoard();
+        console.warn('同步 session 列表失败，继续使用本地画板:', error);
       }
     };
 
-    // 创建默认的 Main Board
     const createDefaultBoard = async () => {
       const sessionId = await createSessionForBoard('main', 'Main Board');
       const newBoard: Board = {
         id: sessionId || 'main',
         name: 'Main Board',
         elements: [],
-        sessionId: sessionId
+        sessionId
       };
+      if (cancelled) return;
       setBoards([newBoard]);
       setCurrentBoardId(newBoard.id);
       setCurrentSessionId(sessionId);
       setElements([]);
-      // 保存到缓存
+      setIsInitialized(true);
       saveBoardsToCache([newBoard]);
       saveCurrentBoardIdToCache(newBoard.id);
     };
 
+    const initBoards = async () => {
+      const cachedBoards = loadBoardsFromCache();
+      const cachedCurrentBoardId = loadCurrentBoardIdFromCache();
+
+      if (cachedBoards && cachedBoards.length > 0) {
+        // 先立刻使用缓存结构，避免等待 session/list 与 message/list
+        const targetBoard = pickBoardByCachedId(cachedBoards, cachedCurrentBoardId);
+        setBoards(cachedBoards);
+        setCurrentBoardId(targetBoard.id);
+        saveCurrentBoardIdToCache(targetBoard.id);
+        setCurrentSessionId(targetBoard.sessionId);
+        setElements(targetBoard.elements ? [...targetBoard.elements] : []);
+        setIsInitialized(true);
+
+        // 异步恢复当前画板媒体对象，恢复后立即渲染
+        restoreBoardElements(targetBoard).then((restoredBoard) => {
+          if (cancelled) return;
+          setBoards(prev => {
+            const updated = prev.map(b => {
+              if (b.id !== restoredBoard.id) return b;
+              return {
+                ...restoredBoard,
+                elements: mergeElementsKeepLocal(restoredBoard.elements, b.elements || [])
+              };
+            });
+            saveBoardsToCache(updated);
+            return updated;
+          });
+          setElements(prev => {
+            const currentActiveId = loadCurrentBoardIdFromCache() || targetBoard.id;
+            if (currentActiveId === restoredBoard.id || currentActiveId === restoredBoard.sessionId) {
+              return mergeElementsKeepLocal(restoredBoard.elements, prev);
+            }
+            return prev;
+          });
+        });
+
+        // 后台仅同步画板元数据，不全量拉取所有画板消息
+        syncBoardsMetaFromServer(cachedBoards, targetBoard.id);
+        return;
+      }
+
+      // 无缓存：先拿 session/list 建立画板，再只拉当前画板 message/list
+      try {
+        const response = await chatApi.getSessionList(userId, 'mcpx-text2image');
+        if (response.code === 200 && response.rows && response.rows.length > 0) {
+          const loadedBoards: Board[] = response.rows.map((session: any, index: number) => {
+            const sessionId = session.id?.toString() || session.id;
+            const boardName = session.sessionTitle || `Board ${index + 1}`;
+            return { id: sessionId, name: boardName, elements: [], sessionId };
+          });
+
+          const targetBoard = pickBoardByCachedId(loadedBoards, cachedCurrentBoardId);
+          if (cancelled) return;
+          setBoards(loadedBoards);
+          setCurrentBoardId(targetBoard.id);
+          saveCurrentBoardIdToCache(targetBoard.id);
+          setCurrentSessionId(targetBoard.sessionId || '');
+          setElements([]);
+          setIsInitialized(true);
+
+          // 只拉当前画板 message/list，避免全量慢加载
+          const currentElements = await loadSessionImages(targetBoard.sessionId || '');
+          if (cancelled) return;
+          setBoards(prev => {
+            const updated = prev.map(b => {
+              if (b.id !== targetBoard.id) return b;
+              return {
+                ...b,
+                elements: mergeElementsKeepLocal(currentElements, b.elements || [])
+              };
+            });
+            saveBoardsToCache(updated);
+            return updated;
+          });
+          setElements(prev => mergeElementsKeepLocal(currentElements, prev));
+        } else {
+          await createDefaultBoard();
+        }
+      } catch (error) {
+        console.error('加载 session 列表失败:', error);
+        await createDefaultBoard();
+      }
+    };
+
     initBoards();
+    return () => {
+      cancelled = true;
+    };
   }, [createSessionForBoard, loadSessionImages, loadBoardsFromCache, loadCurrentBoardIdFromCache, saveBoardsToCache, saveCurrentBoardIdToCache]);
 
   // 生成画板缩略图
@@ -3454,15 +3515,16 @@ const ImageEditorPage: React.FC = () => {
         referenceMaterialsCount: referenceMaterials.length
       });
 
-      // 创建空白视频占位元素
+      // 创建空白视频占位元素（按当前比例展示预留框）
+      const placeholderSize = getVideoPlaceholderSize(videoRatio);
       videoElementId = generateId();
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
         x: selectedImages.length > 0 ? selectedImages[0].x + selectedImages[0].width + 50 : 100,
         y: selectedImages.length > 0 ? selectedImages[0].y : 100,
-        width: 400,
-        height: 225, // 16:9比例
+        width: placeholderSize.width,
+        height: placeholderSize.height,
         videoUrl: undefined, // 占位，还没有视频URL
         href: undefined,
         visible: true,
@@ -5492,11 +5554,14 @@ const ImageEditorPage: React.FC = () => {
                 <div className="flex-1 relative">
                   {/* 高亮显示层 - z-10 置于 textarea 之上，以便 @tag 可点击 */}
                   <div
-                    className="absolute inset-0 px-3 py-3 text-base leading-relaxed pointer-events-none whitespace-pre-wrap break-words overflow-hidden text-white"
+                    ref={promptOverlayRef}
+                    className="absolute inset-0 px-3 py-3 text-base leading-relaxed pointer-events-none whitespace-pre-wrap break-words overflow-y-auto text-white scrollbar-hide"
                     style={{
                       minHeight: isInputFocused ? '100px' : '44px',
                       maxHeight: isInputFocused ? '200px' : '120px',
-                      zIndex: 2
+                      zIndex: 2,
+                      scrollbarWidth: 'none',
+                      msOverflowStyle: 'none',
                     }}
                   >
                     {prompt.split(/(@(?:图片|视频)\d+)/g).map((part, index) => {
@@ -5619,8 +5684,14 @@ const ImageEditorPage: React.FC = () => {
                           ? "描述您想要如何编辑选中的图片...（@图像生成图片）"
                           : "描述您想要生成的图像...（@图像生成图片）"
                     }
-                    className="w-full bg-transparent border-none text-transparent placeholder-white/40 resize-none focus:outline-none text-base leading-relaxed px-3 py-3 transition-all duration-200 caret-white"
+                    className="w-full bg-transparent border-none text-transparent placeholder-white/40 resize-none focus:outline-none text-base leading-relaxed px-3 py-3 transition-all duration-200 caret-white selection:text-transparent selection:bg-blue-500/30"
                     rows={isInputFocused ? 5 : 2}
+                    onScroll={(e) => {
+                      // 同步高亮层的滚动位置
+                      if (promptOverlayRef.current) {
+                        promptOverlayRef.current.scrollTop = e.currentTarget.scrollTop;
+                      }
+                    }}
                     style={{
                       minHeight: isInputFocused ? '100px' : '44px',
                       maxHeight: isInputFocused ? '200px' : '120px',
