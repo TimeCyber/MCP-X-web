@@ -24,7 +24,9 @@
 
 <div align="center">
 
-💰 **GitHub User Exclusive**: Scan the QR code to join our WeChat group and receive **100 RMB worth** of AI image & video generation tokens for free
+🎉 **Now Live**: **GPT Image 2** and **Stable Diffusion 2.0** are fully available on MCP-X! Top-tier international image generation models, all in one place.
+
+💰 **New User Exclusive**: Register now and get **100 RMB** in free credits — try GPT Image 2, SD 2.0, Jimeng, Kling and more. Go wild with the world's best image models!
 
 🎬 Video Generation Tokens &nbsp;|&nbsp; 🖼️ Image Generation Tokens &nbsp;|&nbsp; ⚡ Instant Delivery
 
@@ -111,7 +113,20 @@
 ## 🎨 Latest Updates
 
 <details open>
-<summary><b>v0.1.4 — Seedance 2.0 & Canvas Optimization</b></summary>
+<summary><b>v0.1.6 — HTML to PPT Export & App Builder Enhancements</b></summary>
+
+- 📊 **HTML to PPT Export**: App Builder now supports one-click export of AI-generated HTML slides to `.pptx` format
+  - Background and text separation: screenshots serve as background layers, text is overlaid as independent editable text boxes in PowerPoint / WPS
+  - Smart font mapping: auto-detects Chinese/English content and maps to system fonts (Microsoft YaHei, SimSun, Calibri, etc.) for consistent cross-platform rendering
+  - Auto slide detection: supports `section[data-title]`, `.slide`, `[data-slide]` and other common HTML presentation frameworks
+  - Full-screen loading overlay during export to prevent accidental interactions
+- 🔧 **Export Stability Fix**: Resolved duplicate page issue caused by stale script listeners from previous export sessions — fixed via version guard + listener reference management
+- 💡 **App Builder UX**: Export button only enabled after preview page is fully loaded; cross-origin previews show a clear prompt
+
+</details>
+
+<details>
+<summary><b>v0.1.5 — Video Pipeline & Cache Experience Optimization</b></summary>
 
 - 🎬 **Seedance 2.0 Support**: New video generation model with significantly improved quality and motion
 - 🖼️ **Canvas Video Thumbnail Fix**: Fixed intermittent missing video covers after page refresh

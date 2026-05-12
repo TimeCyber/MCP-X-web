@@ -18,10 +18,12 @@ import {
   type ChatMessage as ChatMessageType
 } from '../services/appBuildApi';
 import { toast } from '../utils/toast';
+import { exportToPptx, captureSlideScreenshots, injectScreenshotScript } from '../utils/exportPptx';
 import { 
   Send, 
   Cloud, 
-  X
+  X,
+  FileDown
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Logo } from '../components/ui/Logo';
@@ -139,10 +141,14 @@ export const AppBuildPage: React.FC = () => {
   // 标记是否正在"加载更多历史"，是则恢复滚动位置而非滚到底
   const isLoadingMoreRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
+  // 用户是否已主动向上滚动（此时不强制滚到底）
+  const userScrolledUpRef = useRef(false);
   const userId = localStorage.getItem('userId');
   const token = localStorage.getItem('token');
   // 代码折叠状态持久存储（会话级）
   const codeOpenMapRef = useRef<Map<string, boolean>>(new Map());
+  // iframe ref（用于导出 PPT 等操作）
+  const previewIframeRef = useRef<HTMLIFrameElement>(null);
 
   // 获取自动发送标记的sessionStorage key
   const getAutoSentKey = (id?: string) => `app_build_auto_sent_${id || 'unknown'}`;
@@ -272,8 +278,9 @@ export const AppBuildPage: React.FC = () => {
     return Math.random() < 0.5 ? 'dino' : 'tank';
   }, [isGenerating]);
 
-  // 滚动到底部
-  const scrollToBottom = () => {
+  // 滚动到底部（仅当用户没有主动上翻时执行）
+  const scrollToBottom = (force = false) => {
+    if (!force && userScrolledUpRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -290,6 +297,15 @@ export const AppBuildPage: React.FC = () => {
       scrollToBottom();
     }
   }, [messages]);
+
+  // 监听消息容器滚动，判断用户是否主动上翻
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const threshold = 40;
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - threshold;
+    userScrolledUpRef.current = !atBottom;
+  }, []);
 
   // 构造多轮对话上下文（最近N条）
   // 将当前会话历史转换为 DeepSeek /chat/completions 所需的 messages 数组
@@ -467,11 +483,12 @@ export const AppBuildPage: React.FC = () => {
     }
   };
 
-  // 发送消息
-  const handleSendMessage = async () => {
-    if (!userInput.trim() || isGenerating || !appId) return;
+  // 发送消息（overrideMessage：直接编辑模式自动构建的消息，跳过输入框 state）
+  const handleSendMessage = async (overrideMessage?: string) => {
+    const rawText = overrideMessage !== undefined ? overrideMessage : userInput.trim();
+    if (!rawText || isGenerating || !appId) return;
     
-    let message = userInput.trim();
+    let message = rawText;
     // const contextMessages = buildConversationMessages(8);
     
     // 如果有选中的元素，将元素信息添加到提示词
@@ -487,7 +504,7 @@ export const AppBuildPage: React.FC = () => {
       message += elementContext;
     }
     
-    setUserInput('');
+    if (overrideMessage === undefined) setUserInput('');
     
     // 生成唯一ID，确保不重复
     const timestamp = Date.now();
@@ -705,6 +722,52 @@ export const AppBuildPage: React.FC = () => {
     }
   };
 
+  // 导出 PPT：截图每页 slide + 文字层叠加，生成 .pptx
+  const [exporting, setExporting] = useState(false);
+  const handleExportPptx = async () => {
+    const iframe = previewIframeRef.current;
+    if (!iframe) {
+      toast.error('预览页面尚未加载，无法导出');
+      return;
+    }
+    setExporting(true);
+    try {
+      // 注入截图脚本（同源）
+      let injected = false;
+      try {
+        const iframeDoc = iframe.contentDocument;
+        if (iframeDoc) {
+          injectScreenshotScript(iframeDoc);
+          injected = true;
+        }
+      } catch (_) {
+        console.warn('跨域 iframe，无法注入截图脚本');
+      }
+
+      if (!injected) {
+        toast.error('预览页面跨域，暂不支持导出');
+        return;
+      }
+
+      // 触发截图 + 文字提取
+      const slides = await captureSlideScreenshots(iframe, 60000);
+      console.log('✅ 截图完成，共', slides.length, '页');
+
+      if (slides.length === 0) {
+        toast.error('未检测到幻灯片内容，无法导出');
+        return;
+      }
+
+      const fileName = (appInfo?.appName || 'presentation') + '.pptx';
+      await exportToPptx(slides, fileName);
+      toast.success(`已导出 ${slides.length} 页幻灯片`);
+    } catch (err) {
+      console.error('导出PPT失败:', err);
+      toast.error('导出PPT失败：' + (err instanceof Error ? err.message : '请重试'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // 用户直接编辑代码后，将修改内容作为 chat 消息发给 AI 应用
   // 查询 dev server 启动错误日志
@@ -749,6 +812,19 @@ export const AppBuildPage: React.FC = () => {
   // 处理元素选择
   const handleElementSelected = (elementInfo: ElementInfo) => {
     setSelectedElementInfo(elementInfo);
+  };
+
+  // 直接编辑：文字修改完成 — 全部走 AI 处理
+  const handleDirectTextEdit = async (selector: string, oldText: string, newText: string) => {
+    const autoMsg = `请将页面中选择器"${selector}"元素的文本内容从"${oldText}"修改为"${newText}"，其他代码保持不变，直接输出完整修改后的文件。`;
+    handleSendMessage(autoMsg);
+  };
+
+  // 直接编辑：拖拽重排完成 — 全部走 AI 处理
+  const handleDirectDragReorder = async (movedSelector: string, referenceSelector: string, position: 'before' | 'after') => {
+    const dir = position === 'before' ? '前面' : '后面';
+    const autoMsg = `请将页面中选择器"${movedSelector}"元素移动到"${referenceSelector}"元素的${dir}，其他代码保持不变，直接输出完整修改后的文件。`;
+    handleSendMessage(autoMsg);
   };
 
   // 获取输入框占位符
@@ -828,6 +904,15 @@ export const AppBuildPage: React.FC = () => {
                 {downloading ? '下载中...' : '下载代码'}
               </button> */}
               <button
+                onClick={handleExportPptx}
+                disabled={exporting || !hasDeployablePreview}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-600 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors disabled:opacity-50"
+                title="导出为PPT文件"
+              >
+                <FileDown size={16} />
+                {exporting ? '导出中...' : '导出PPT'}
+              </button>
+              <button
                 onClick={handleDeploy}
                 disabled={deploying}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-md transition-colors shadow-sm disabled:opacity-50"
@@ -845,7 +930,7 @@ export const AppBuildPage: React.FC = () => {
         {/* 左侧聊天区域 */}
         <div className="flex flex-col w-2/5 bg-white rounded-lg shadow-sm border border-slate-200">
           {/* 消息区域 */}
-          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
+          <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4">
             {/* 加载更多历史 */}
             {hasMoreHistory && (
               <div className="text-center mb-4">
@@ -1060,7 +1145,7 @@ export const AppBuildPage: React.FC = () => {
                 }}
               />
               <button
-                onClick={handleSendMessage}
+                onClick={() => handleSendMessage()}
                 disabled={isGenerating || !userInput.trim() || !isOwner}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
@@ -1095,6 +1180,9 @@ export const AppBuildPage: React.FC = () => {
               onClearLogs={() => setConsoleLogs([])}
               logsLoading={logsLoading}
               onRefreshLogs={() => fetchDevServerLogs(false)}
+              onDirectTextEdit={handleDirectTextEdit}
+              onDirectDragReorder={handleDirectDragReorder}
+              iframeRef={previewIframeRef}
             />
             {isGenerating && (
               <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center">
@@ -1238,6 +1326,17 @@ export const AppBuildPage: React.FC = () => {
             <Logo className="h-6 w-6" />
             <span className="text-sm text-slate-800 animate-pulse">{currentLanguage === 'zh' ? '正在部署，请稍候…' : 'Deploying, please wait…'}</span>
     </div>
+        </div>
+      )}
+      {exporting && (
+        <div className="fixed inset-0 z-[40] bg-black/40 backdrop-blur-sm flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 px-8 py-6 bg-white/90 rounded-xl shadow-lg border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-slate-300 border-t-green-600" />
+              <span className="text-sm text-slate-800">正在生成 PPT，请稍候…</span>
+            </div>
+            <p className="text-xs text-slate-500">页面较多时可能需要十几秒</p>
+          </div>
         </div>
       )}
     </div>

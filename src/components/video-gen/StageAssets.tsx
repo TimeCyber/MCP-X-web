@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, MapPin, Check, Sparkles, Loader2, Users, RefreshCw, Shirt, Plus, X, Image as ImageIcon, Palette, Database, FolderOpen, Upload, Aperture, Eye, Film } from 'lucide-react';
 import type { VideoGenProject, CharacterVariation } from '../../types/videogen';
 import { generateImage, generateVisualPrompts, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, IMAGE_STYLES, uploadFileToOss } from '../../services/videogenService';
-import { modelApi, ModelInfo } from '../../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 import { chatApi } from '../../services/chatApi';
 
 // 跨项目资源项
@@ -76,7 +76,9 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
           // 只显示 category 为 "text2image" 的模型
-          const imgModels = response.data.filter((m: ModelInfo) => m.category === 'text2image');
+          const imgModels = sortModelsByOrderBy(
+            response.data.filter((m: ModelInfo) => m.category === 'text2image')
+          );
           setImageModels(imgModels);
           
           // 如果项目已有设置的模型，使用项目的模型

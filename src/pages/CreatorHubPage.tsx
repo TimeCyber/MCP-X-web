@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
-import { modelApi, ModelInfo } from '../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { showcaseApi, ShowcaseCategory, ShowcaseContent } from '../services/showcaseApi';
 import { useLanguage } from '../contexts/LanguageContext';
 import { toast } from '../utils/toast';
@@ -46,6 +46,8 @@ type ImageRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
 const CREATOR_HUB_IMAGE_SIZE_CACHE_KEY = 'creatorHub_imageSize';
 const CREATOR_HUB_VIDEO_RATIO_CACHE_KEY = 'creatorHub_videoRatio';
 const CREATOR_HUB_VIDEO_GEN_CACHE_KEY = 'creatorHub_videoGen';
+// 与 ImageEditorPage 共享的图片模型缓存 key
+const SHARED_IMAGE_MODEL_KEY = 'shared_image_model_id';
 
 const VALID_VIDEO_RATIOS = new Set<VideoRatio>(['16:9', '9:16', '1:1']);
 const VALID_IMAGE_RESOLUTIONS = new Set<ImageResolution>(['1K', '2K', '4K']);
@@ -512,7 +514,133 @@ const DropdownSelector: React.FC<{
   );
 };
 
-// 长视频镜头列表组件
+// 精选内容卡片 — 等图片加载完成后整体淡入，避免卡片先出现再跳变
+const ShowcaseCard: React.FC<{
+  item: ShowcaseContent;
+  currentLanguage: string;
+  onClick: () => void;
+}> = ({ item, currentLanguage, onClick }) => {
+  const [ready, setReady] = useState(false);
+
+  // 判断该卡片是否有需要等待加载的图片
+  const getImageSrc = (): string | null => {
+    if (item.contentType === 'image') {
+      return item.thumbnailUrl || item.generatedResult || null;
+    }
+    if (item.contentType === 'video' || item.contentType === 'longvideo' || item.contentType === 'app') {
+      return isValidThumbnail(item.thumbnailUrl) ? item.thumbnailUrl! : null;
+    }
+    return item.thumbnailUrl || null;
+  };
+
+  const imageSrc = getImageSrc();
+
+  // 无图片内容（文案、视频无封面等）直接显示
+  useEffect(() => {
+    if (!imageSrc) {
+      setReady(true);
+      return;
+    }
+    const img = new window.Image();
+    img.onload = () => setReady(true);
+    img.onerror = () => setReady(true); // 加载失败也显示（会走 fallback）
+    img.src = imageSrc;
+  }, [imageSrc]);
+
+  return (
+    <div
+      className={`bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer ${
+        ready ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+      }`}
+      style={{ transition: 'opacity 0.3s ease, transform 0.3s ease' }}
+      onClick={onClick}
+    >
+      {/* 缩略图 */}
+      <div className="bg-gray-900 relative overflow-hidden">
+        {item.contentType === 'video' ? (
+          <>
+            {isValidThumbnail(item.thumbnailUrl) ? (
+              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : item.generatedResult ? (
+              (() => {
+                const videoUrlRegex = /(https?:\/\/[^\s]+\.(?:mp4|webm|mov|avi|mkv))/i;
+                const match = item.generatedResult.match(videoUrlRegex);
+                const videoUrl = match ? match[1] : item.generatedResult;
+                return <VideoThumbnail videoUrl={videoUrl} alt={item.title} className="w-full aspect-video" />;
+              })()
+            ) : (
+              <div className="w-full aspect-video flex items-center justify-center text-gray-600"><Video className="w-12 h-12" /></div>
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors z-10">
+              <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                <Play className="w-6 h-6 text-white ml-1" />
+              </div>
+            </div>
+          </>
+        ) : item.contentType === 'longvideo' ? (
+          <>
+            {isValidThumbnail(item.thumbnailUrl) ? (
+              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : (() => {
+              try {
+                const projectData = JSON.parse(item.generatedResult || '{}');
+                const shots = projectData.shots || [];
+                const firstShot = shots.find((s: any) => s.keyframes?.find((kf: any) => kf.type === 'start' && kf.imageUrl));
+                const imageUrl = firstShot?.keyframes?.find((kf: any) => kf.type === 'start')?.imageUrl;
+                if (imageUrl) return <img src={imageUrl} alt={item.title} className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300" />;
+              } catch {}
+              return <div className="w-full aspect-video flex items-center justify-center text-gray-600"><Film className="w-12 h-12" /></div>;
+            })()}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors z-10">
+              <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center"><Play className="w-6 h-6 text-white ml-1" /></div>
+            </div>
+            <div className="absolute top-2 left-2 px-2 py-0.5 bg-indigo-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
+              <Film className="w-3 h-3" />{currentLanguage === 'zh' ? '长视频' : 'Long Video'}
+            </div>
+          </>
+        ) : item.contentType === 'app' ? (
+          <>
+            {isValidThumbnail(item.thumbnailUrl) ? (
+              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            ) : (
+              <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-green-900/40 to-emerald-900/40 text-green-400"><Globe className="w-12 h-12" /></div>
+            )}
+            <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
+              <Globe className="w-3 h-3" />{currentLanguage === 'zh' ? '网页应用' : 'Web App'}
+            </div>
+          </>
+        ) : item.contentType === 'image' ? (
+          item.thumbnailUrl ? (
+            <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+          ) : item.generatedResult ? (
+            <img src={item.generatedResult} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+          ) : (
+            <div className="w-full aspect-square flex items-center justify-center text-gray-600"><Image className="w-12 h-12" /></div>
+          )
+        ) : (
+          item.thumbnailUrl ? (
+            <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+          ) : (
+            <div className="w-full aspect-video flex items-center justify-center text-gray-600"><MessageSquare className="w-12 h-12" /></div>
+          )
+        )}
+        {item.isRecommended === '1' && (
+          <div className="absolute top-2 right-2 px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded z-20">
+            {currentLanguage === 'zh' ? '推荐' : 'Featured'}
+          </div>
+        )}
+      </div>
+      {/* 信息 */}
+      <div className="p-4">
+        <h3 className="text-white font-medium text-sm mb-3 line-clamp-2 group-hover:text-orange-400 transition-colors">{item.title}</h3>
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span className="flex items-center gap-1"><Eye className="w-3 h-3" />{item.viewCount || 0}</span>
+          {item.aiModel && <span className="text-orange-400 text-[10px] font-mono truncate max-w-[80px]">{item.aiModel}</span>}
+        </div>
+      </div>
+    </div>
+  );
+};
 const LongVideoList: React.FC<{
   videoList: { shotNumber: number; actionSummary: string; duration: number; videoUrl: string; imageUrl?: string }[];
   currentLanguage: string;
@@ -665,6 +793,15 @@ export const CreatorHubPage: React.FC = () => {
   const [showcaseLoading, setShowcaseLoading] = useState(false);
   const [showcasePage, setShowcasePage] = useState(1);
   const [showcaseTotal, setShowcaseTotal] = useState(0);
+
+  // 响应式列数：监听窗口宽度变化
+  const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1280);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const colCount = windowWidth < 1024 ? 2 : 4;
   const showcasePageSize = 50;
   const [selectedShowcase, setSelectedShowcase] = useState<ShowcaseContent | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -714,7 +851,7 @@ export const CreatorHubPage: React.FC = () => {
     try {
       const response = await modelApi.getModelList();
       if (response.code === 200 && response.data) {
-        setModels(response.data);
+        setModels(sortModelsByOrderBy(response.data as ModelInfo[]));
       }
     } catch (error) {
       console.error('Failed to load models:', error);
@@ -812,7 +949,7 @@ export const CreatorHubPage: React.FC = () => {
     }
   }, [selectedCategory, showcasePageSize, searchKeyword]);
 
-  const syncShowcaseShareParam = useCallback((showcaseId?: number) => {
+  const syncShowcaseShareParam = useCallback((showcaseId?: number | string) => {
     const params = new URLSearchParams(location.search);
     if (showcaseId != null) {
       params.set('showcaseId', String(showcaseId));
@@ -867,7 +1004,17 @@ export const CreatorHubPage: React.FC = () => {
     shareUrl.searchParams.set('showcaseId', String(selectedShowcase.id));
     const finalUrl = shareUrl.toString();
 
-    // 优先使用系统分享
+    // 优先复制链接：clipboard 必须在用户手势上下文中立即调用，
+    // 不能放在 await navigator.share() 之后（手势上下文会被消耗）
+    try {
+      await navigator.clipboard.writeText(finalUrl);
+      toast.success(currentLanguage === 'zh' ? '分享链接已复制' : 'Share link copied');
+      return;
+    } catch {
+      // clipboard 不可用时（如非 HTTPS 或权限被拒），降级到系统分享
+    }
+
+    // 降级：系统原生分享
     if (navigator.share) {
       try {
         await navigator.share({
@@ -877,18 +1024,12 @@ export const CreatorHubPage: React.FC = () => {
         });
         return;
       } catch (error: any) {
-        // 用户取消分享不提示错误
         if (error?.name === 'AbortError') return;
       }
     }
 
-    // 回退到复制链接
-    try {
-      await navigator.clipboard.writeText(finalUrl);
-      toast.success(currentLanguage === 'zh' ? '分享链接已复制' : 'Share link copied');
-    } catch {
-      window.prompt(currentLanguage === 'zh' ? '复制下面链接进行分享：' : 'Copy this link to share:', finalUrl);
-    }
+    // 最终降级：prompt 手动复制
+    window.prompt(currentLanguage === 'zh' ? '复制下面链接进行分享：' : 'Copy this link to share:', finalUrl);
   }, [selectedShowcase, currentLanguage]);
 
   // 初始加载分类和内容
@@ -906,19 +1047,20 @@ export const CreatorHubPage: React.FC = () => {
     const sharedIdRaw = params.get('showcaseId');
     if (!sharedIdRaw) return;
 
-    const sharedId = Number(sharedIdRaw);
-    if (!Number.isFinite(sharedId) || sharedId <= 0) return;
+    // 用字符串比较，避免超大 id（雪花算法 > MAX_SAFE_INTEGER）转 Number 后精度丢失
+    const sharedIdStr = sharedIdRaw.trim();
+    if (!sharedIdStr || !/^\d+$/.test(sharedIdStr)) return;
 
-    if (showDetailModal && selectedShowcase?.id === sharedId) return;
+    if (showDetailModal && String(selectedShowcase?.id) === sharedIdStr) return;
 
-    const target = showcaseList.find(item => item.id === sharedId);
+    const target = showcaseList.find(item => String(item.id) === sharedIdStr);
     if (target) {
       handleOpenShowcaseDetail(target, { incrementView: false, syncUrl: false });
       return;
     }
 
-    if (sharedShowcaseTriedIdsRef.current.has(sharedId)) return;
-    sharedShowcaseTriedIdsRef.current.add(sharedId);
+    if (sharedShowcaseTriedIdsRef.current.has(sharedIdStr as any)) return;
+    sharedShowcaseTriedIdsRef.current.add(sharedIdStr as any);
 
     let cancelled = false;
     const tryLoadSharedItem = async () => {
@@ -927,12 +1069,12 @@ export const CreatorHubPage: React.FC = () => {
           pageNum: 1,
           pageSize: 1,
           status: '0',
-          id: sharedId
+          id: sharedIdStr   // 传字符串，后端通常能正确处理
         } as any);
         const rows = response.rows || [];
-        const matched = rows.find(item => item.id === sharedId);
+        const matched = rows.find((item: any) => String(item.id) === sharedIdStr);
         if (!cancelled && matched) {
-          setShowcaseList(prev => prev.some(item => item.id === matched.id) ? prev : [matched, ...prev]);
+          setShowcaseList(prev => prev.some(item => String(item.id) === sharedIdStr) ? prev : [matched, ...prev]);
           handleOpenShowcaseDetail(matched, { incrementView: false, syncUrl: false });
         } else if (!cancelled) {
           toast.error(currentLanguage === 'zh' ? '分享内容不存在或已下架' : 'Shared content not found');
@@ -986,7 +1128,7 @@ export const CreatorHubPage: React.FC = () => {
     });
   }, [models, selectedType]);
 
-  // 当过滤后的模型列表变化时：优先恢复视频模式缓存的模型，否则默认选第一个
+  // 当过滤后的模型列表变化时：优先恢复缓存的模型，否则默认选第一个
   useEffect(() => {
     if (filteredModels.length === 0) return;
     if (filteredModels.some(m => m.id === selectedModel)) return;
@@ -997,9 +1139,25 @@ export const CreatorHubPage: React.FC = () => {
       if (mid && filteredModels.some(m => m.id === mid)) {
         nextId = mid;
       }
+    } else if (selectedType === 'image') {
+      // 图片模式：优先读与 ImageEditorPage 共享的缓存
+      const cachedId = localStorage.getItem(SHARED_IMAGE_MODEL_KEY);
+      if (cachedId && filteredModels.some(m => m.id === cachedId)) {
+        nextId = cachedId;
+      }
     }
     setSelectedModel(nextId);
   }, [filteredModels, selectedModel, selectedType]);
+
+  // 图片模式下，selectedModel 变化时同步写入共享缓存
+  useEffect(() => {
+    if (selectedType !== 'image' || !selectedModel) return;
+    try {
+      localStorage.setItem(SHARED_IMAGE_MODEL_KEY, selectedModel);
+    } catch (error) {
+      console.error('保存共享图片模型缓存失败:', error);
+    }
+  }, [selectedModel, selectedType]);
 
   // 获取当前选中的功能配置
   const currentOption = creationOptions.find(o => o.type === selectedType)!;
@@ -1658,7 +1816,7 @@ export const CreatorHubPage: React.FC = () => {
         </div>
 
         {/* 精选内容展示区 */}
-        <div className="w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mt-4 lg:mt-6">
+        <div className="w-full lg:max-w-4xl xl:max-w-5xl 2xl:max-w-7xl mt-4 lg:mt-6 min-w-0">
           <div className="flex items-center justify-between mb-8 gap-4">
             <h2 className="text-2xl lg:text-3xl font-bold text-white">
               {currentLanguage === 'zh' ? 'AIGC开源社区' : 'AIGC Community'}
@@ -1745,182 +1903,26 @@ export const CreatorHubPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {/* 瀑布流布局 - 将数据按列分组，确保横向第一排显示最新内容 */}
+              {/* 瀑布流：手动分列，确保新内容横向分布到各列而非全堆第一列 */}
               {(() => {
-                const colCount = 4; // 列数（对应 xl:columns-4）
-                // 将数据按行优先重排为列优先：横向第一排的元素分配到各列第一位
-                const cols: ShowcaseContent[][] = Array.from({ length: colCount }, () => []);
-                showcaseList.forEach((item, i) => {
-                  cols[i % colCount].push(item);
-                });
-                const reordered = cols.flat();
+                // 按索引取模分配：item[0]→col0, item[1]→col1, item[2]→col2, item[3]→col3, item[4]→col0...
+                const cols: typeof showcaseList[] = Array.from({ length: colCount }, () => []);
+                showcaseList.forEach((item, idx) => cols[idx % colCount].push(item));
                 return (
-              <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 lg:gap-6 space-y-4 lg:space-y-6">
-                {reordered.map((item) => (
-                  <div
-                    key={item.id}
-                    className="break-inside-avoid bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer"
-                    onClick={() => handleOpenShowcaseDetail(item, { incrementView: true, syncUrl: true })}
-                  >
-                    {/* 缩略图 - 自适应高度 */}
-                    <div className="bg-gray-900 relative overflow-hidden">
-                      {/* 视频类型：显示第一帧或缩略图 */}
-                      {item.contentType === 'video' ? (
-                        <>
-                          {isValidThumbnail(item.thumbnailUrl) ? (
-                            <img
-                              src={item.thumbnailUrl}
-                              alt={item.title}
-                              className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          ) : item.generatedResult ? (
-                            (() => {
-                              // 解析视频URL - 提取第一个有效的视频链接
-                              const parseVideoUrl = (url: string) => {
-                                const videoUrlRegex = /(https?:\/\/[^\s]+\.(?:mp4|webm|mov|avi|mkv))/i;
-                                const match = url.match(videoUrlRegex);
-                                return match ? match[1] : url;
-                              };
-                              const videoUrl = parseVideoUrl(item.generatedResult);
-                              return (
-                                <VideoThumbnail
-                                  videoUrl={videoUrl}
-                                  alt={item.title}
-                                  className="w-full aspect-video"
-                                />
-                              );
-                            })()
-                          ) : (
-                            <div className="w-full aspect-video flex items-center justify-center text-gray-600">
-                              <Video className="w-12 h-12" />
-                            </div>
-                          )}
-                          {/* 播放按钮覆盖层 */}
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors z-10">
-                            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                              <Play className="w-6 h-6 text-white ml-1" />
-                            </div>
-                          </div>
-                        </>
-                      ) : item.contentType === 'longvideo' ? (
-                        <>
-                          {isValidThumbnail(item.thumbnailUrl) ? (
-                            <img
-                              src={item.thumbnailUrl}
-                              alt={item.title}
-                              className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                            />
-                          ) : (() => {
-                            // 尝试从 generatedResult 中解析第一个镜头的首帧图
-                            try {
-                              const projectData = JSON.parse(item.generatedResult || '{}');
-                              const shots = projectData.shots || [];
-                              const firstShot = shots.find((s: any) => s.keyframes?.find((kf: any) => kf.type === 'start' && kf.imageUrl));
-                              const imageUrl = firstShot?.keyframes?.find((kf: any) => kf.type === 'start')?.imageUrl;
-                              if (imageUrl) {
-                                return <img src={imageUrl} alt={item.title} className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300" />;
-                              }
-                            } catch {}
-                            return (
-                              <div className="w-full aspect-video flex items-center justify-center text-gray-600">
-                                <Film className="w-12 h-12" />
-                              </div>
-                            );
-                          })()}
-                          {/* 长视频标识 + 播放按钮 */}
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors z-10">
-                            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                              <Play className="w-6 h-6 text-white ml-1" />
-                            </div>
-                          </div>
-                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-indigo-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
-                            <Film className="w-3 h-3" />
-                            {currentLanguage === 'zh' ? '长视频' : 'Long Video'}
-                          </div>
-                        </>
-                      ) : item.contentType === 'app' ? (
-                        <>
-                          {isValidThumbnail(item.thumbnailUrl) ? (
-                            <img
-                              src={item.thumbnailUrl}
-                              alt={item.title}
-                              className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                            />
-                          ) : (
-                            <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-green-900/40 to-emerald-900/40 text-green-400">
-                              <Globe className="w-12 h-12" />
-                            </div>
-                          )}
-                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-500/80 text-white text-[10px] font-bold rounded z-20 flex items-center gap-1">
-                            <Globe className="w-3 h-3" />
-                            {currentLanguage === 'zh' ? '网页应用' : 'Web App'}
-                          </div>
-                        </>
-                      ) : item.contentType === 'image' ? (
-                        item.thumbnailUrl ? (
-                          <img
-                            src={item.thumbnailUrl}
-                            alt={item.title}
-                            className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
+                  <div className="flex gap-4 lg:gap-6 items-start w-full min-w-0">
+                    {cols.map((colItems, colIdx) => (
+                      <div key={colIdx} className="flex-1 min-w-0 flex flex-col gap-4 lg:gap-6">
+                        {colItems.map((item) => (
+                          <ShowcaseCard
+                            key={item.id}
+                            item={item}
+                            currentLanguage={currentLanguage}
+                            onClick={() => handleOpenShowcaseDetail(item, { incrementView: true, syncUrl: true })}
                           />
-                        ) : item.generatedResult ? (
-                          <img
-                            src={item.generatedResult}
-                            alt={item.title}
-                            className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
-                          />
-                        ) : (
-                          <div className="w-full aspect-square flex items-center justify-center text-gray-600">
-                            <Image className="w-12 h-12" />
-                          </div>
-                        )
-                      ) : (
-                        item.thumbnailUrl ? (
-                          <img
-                            src={item.thumbnailUrl}
-                            alt={item.title}
-                            className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
-                          />
-                        ) : (
-                          <div className="w-full aspect-video flex items-center justify-center text-gray-600">
-                            <MessageSquare className="w-12 h-12" />
-                          </div>
-                        )
-                      )}
-                      {item.isRecommended === '1' && (
-                        <div className="absolute top-2 right-2 px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded z-20">
-                          {currentLanguage === 'zh' ? '推荐' : 'Featured'}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 信息 */}
-                    <div className="p-4">
-                      <h3 className="text-white font-medium text-sm mb-3 line-clamp-2 group-hover:text-orange-400 transition-colors">
-                        {item.title}
-                      </h3>
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1">
-                            <Eye className="w-3 h-3" />
-                            {item.viewCount || 0}
-                          </span>
-                        </div>
-                        {item.aiModel && (
-                          <span className="text-orange-400 text-[10px] font-mono truncate max-w-[80px]">
-                            {item.aiModel}
-                          </span>
-                        )}
+                        ))}
                       </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
                 );
               })()}
 

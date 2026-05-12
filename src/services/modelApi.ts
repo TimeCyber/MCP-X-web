@@ -65,14 +65,37 @@ export interface ModelInfo {
   apiHost: string;
   apiKey: string;
   remark: string;
+  /** 排序序号，越小越靠前；缺省或未解析时排到末尾（接口可能返回数字或字符串） */
+  orderBy?: number | string;
+}
+
+/** 按 orderBy 升序排列模型列表（从小到大） */
+export function sortModelsByOrderBy(models: ModelInfo[]): ModelInfo[] {
+  const toNum = (m: ModelInfo): number => {
+    const v = m.orderBy;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && String(v).trim() !== '') {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+  return [...models].sort((a, b) => toNum(a) - toNum(b));
 }
 
 // 模型相关API
 export const modelApi = {
-  // 获取模型列表
+  // 获取模型列表（统一按 orderBy 升序，各页面拿到的 data 已为排序结果）
   getModelList: async () => {
     const response = await apiClient.get('/system/model/modelList');
-    return response.data;
+    const body = response.data;
+    if (body?.code === 200 && Array.isArray(body.data)) {
+      return {
+        ...body,
+        data: sortModelsByOrderBy(body.data as ModelInfo[])
+      };
+    }
+    return body;
   },
 };
 

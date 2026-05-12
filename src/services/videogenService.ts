@@ -407,11 +407,109 @@ export const createNewProjectState = async (videoType?: 'script' | 'promotional'
   return tempProject;
 };
 
-// 清理 JSON 字符串
+// 清理并修复 AI 生成的 JSON 字符串
+// 主要处理：字符串值内的未转义双引号、控制字符
 const cleanJsonString = (str: string): string => {
   if (!str) return "{}";
-  let cleaned = str.replace(/```json\n?/g, '').replace(/```/g, '');
-  return cleaned.trim();
+
+  // 去掉 markdown 代码块标记
+  let cleaned = str.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+
+  // 先尝试直接解析，成功则直接返回
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch (_) { /* 继续修复 */ }
+
+  // 逐字符扫描修复：
+  // 1. 字符串内的控制字符（换行、制表符等）→ 转义
+  // 2. 字符串内的未转义双引号 → 用前瞻判断是否为闭合引号，否则转义
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  let i = 0;
+
+  while (i < cleaned.length) {
+    const ch = cleaned[i];
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      i++;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaped = true;
+      result += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      if (!inString) {
+        inString = true;
+        result += ch;
+        i++;
+        continue;
+      }
+
+      // 在字符串内遇到 " —— 判断是闭合引号还是嵌入的未转义引号
+      // 前瞻：跳过空白，看下一个有意义的字符
+      let j = i + 1;
+      while (j < cleaned.length && (cleaned[j] === ' ' || cleaned[j] === '\t')) j++;
+      const next = j < cleaned.length ? cleaned[j] : '';
+
+      // 如果下一个有意义字符是 JSON 结构符，则当前 " 是闭合引号
+      const isClosing =
+        next === ':' ||   // key 后面的冒号
+        next === ',' ||   // 值后面的逗号
+        next === '}' ||   // 对象结束
+        next === ']' ||   // 数组结束
+        next === '\n' ||  // 换行（下一行是新 key 或结束）
+        next === '\r' ||
+        next === '' ;     // 字符串末尾
+
+      if (isClosing) {
+        inString = false;
+        result += ch;
+      } else {
+        // 嵌入的未转义引号，转义它
+        result += '\\"';
+      }
+      i++;
+      continue;
+    }
+
+    if (inString) {
+      // 字符串内的控制字符必须转义
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        if (ch === '\n') { result += '\\n'; i++; continue; }
+        if (ch === '\r') { result += '\\r'; i++; continue; }
+        if (ch === '\t') { result += '\\t'; i++; continue; }
+        i++; // 其他控制字符直接跳过
+        continue;
+      }
+    }
+
+    result += ch;
+    i++;
+  }
+
+  // 再次尝试解析
+  try {
+    JSON.parse(result);
+    return result;
+  } catch (_) { /* 继续兜底 */ }
+
+  // 最后手段：暴力替换换行和控制字符
+  const fallback = cleaned
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\t/g, ' ')
+    .replace(/[\x00-\x1f\x7f]/g, '');
+
+  return fallback;
 };
 
 /**
@@ -629,9 +727,9 @@ export const generateShotList = async (
   const notifyUI = (currentScenePartialShots: any[], sceneId: string) => {
     if (!onShotsUpdate) return;
 
-    // 1. 格式化并标记当前场景的镜头
+    // 1. 当前场景流式中间镜头：使用基于 sceneId 的稳定 temp id，避免 allShots 长度变化导致 id 漂移
     const formattedCurrent = currentScenePartialShots.map((s, idx) => {
-      const shotId = `shot-temp-${allShots.length + idx + 1}`;
+      const shotId = `shot-temp-${sceneId}-${idx + 1}`;
       return {
         ...s,
         id: shotId,
@@ -639,11 +737,11 @@ export const generateShotList = async (
         keyframes: Array.isArray(s.keyframes)
           ? s.keyframes.map((k: any, kIdx: number) => ({
               ...k,
-              id: `kf-temp-${allShots.length + idx + 1}-${k.type || kIdx}`,
+              id: `kf-temp-${sceneId}-${idx + 1}-${k.type || kIdx}`,
               status: 'pending' as const
             }))
           : (s.visualPrompt || s.actionSummary ? [{
-              id: `kf-temp-${allShots.length + idx + 1}-start`,
+              id: `kf-temp-${sceneId}-${idx + 1}-start`,
               type: 'start' as const,
               visualPrompt: s.visualPrompt || s.actionSummary,
               status: 'pending' as const
@@ -651,25 +749,8 @@ export const generateShotList = async (
       } as Shot;
     });
 
-    // 2. 格式化所有已完成的镜头
-    const formattedFinished = allShots.map((s, idx) => ({
-      ...s,
-      id: `shot-${idx + 1}`,
-      keyframes: Array.isArray(s.keyframes)
-        ? s.keyframes.map(k => ({
-          ...k,
-          id: `kf-${idx + 1}-${k.type}`,
-          status: 'pending' as const
-        }))
-        : (s.visualPrompt ? [{
-            id: `kf-${idx + 1}-start`,
-            type: 'start' as const,
-            visualPrompt: s.visualPrompt,
-            status: 'pending' as const
-          }] : [])
-    }));
-
-    onShotsUpdate([...formattedFinished, ...formattedCurrent]);
+    // 2. 已完成的镜头直接使用 allShots（id 已在 push 时固定），不重新生成 id
+    onShotsUpdate([...allShots, ...formattedCurrent]);
   };
 
   // 逐场景处理

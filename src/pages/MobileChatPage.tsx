@@ -4,7 +4,7 @@ import { ChatProvider, useChat } from '../contexts/ChatContext';
 import { FilesProvider } from '../contexts/FilesContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { chatApi, ChatMessageVo, streamChatSend, streamChatSendWithFiles } from '../services/chatApi';
-import { modelApi, ModelInfo } from '../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { toast } from '../utils/toast';
 import { 
   shouldShowSpeechRecognition, 
@@ -1669,9 +1669,10 @@ const MobileChatPageContent: React.FC = () => {
     try {
       const response = await modelApi.getModelList();
       if (response.code === 200 && response.data) {
-        setModels(response.data);
-        if (!selectedModel && response.data.length > 0) {
-          setSelectedModel(response.data[0].id);
+        const list = sortModelsByOrderBy(response.data as ModelInfo[]);
+        setModels(list);
+        if (!selectedModel && list.length > 0) {
+          setSelectedModel(list[0].id);
         }
       }
     } catch (error) {

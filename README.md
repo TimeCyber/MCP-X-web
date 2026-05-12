@@ -26,7 +26,9 @@
 
 <div align="center">
 
-💰 **GitHub 用户专属福利**：扫码加入微信群，免费领取 **100 元等值** AI 生图生视频 Token
+🎉 **重磅上线**：**GPT Image 2** 与 **Stable Diffusion 2.0** 现已全面上线 MCP-X！国际顶级生图模型，一站体验。
+
+💰 **新用户专属**：注册即送 **100 元**代金券，GPT Image 2 / SD 2.0 / 即梦 / 可灵 随便玩，国外生图模型玩到 high！
 
 🎬 视频生成 Token &nbsp;|&nbsp; 🖼️ 图像生成 Token &nbsp;|&nbsp; ⚡ 扫码即发
 
@@ -113,6 +115,19 @@
 ## 🎨 最新更新
 
 <details open>
+<summary><b>v0.1.6 — HTML 转 PPT 导出 & 应用构建增强</b></summary>
+
+- 📊 **HTML 转 PPT 导出**：应用构建页新增「导出 PPT」功能，支持将 AI 生成的 HTML 幻灯片一键导出为 `.pptx` 文件
+  - 背景与文字分离：截图作为背景图层，文字以独立文本框叠加，在 PowerPoint / WPS 中完全可编辑
+  - 智能字体映射：自动识别中英文，映射到微软雅黑、宋体、Calibri 等系统字体，确保跨平台显示一致
+  - 自动识别幻灯片结构：支持 `section[data-title]`、`.slide`、`[data-slide]` 等主流 PPT HTML 框架
+  - 导出中显示全屏 Loading 遮罩，防止误操作
+- 🔧 **导出稳定性优化**：修复多次导出时旧版脚本监听器残留导致页数翻倍的问题，通过版本号守卫 + 监听器引用管理彻底解决
+- 💡 **App Builder 体验**：导出按钮仅在预览页面加载完成后可用，跨域预览自动提示
+
+</details>
+
+<details>
 <summary><b>v0.1.5 — 视频链路与缓存体验优化</b></summary>
 
 - 🆕 **模型升级**：支持最新 **wan2.7** 与 **happy horse** 视频模型，提升生成质量与风格覆盖

@@ -11,15 +11,18 @@ import { QuickPrompts } from '../components/image-editor/QuickPrompts';
 import type { Tool, Point, Element, ImageElement, PathElement, ShapeElement, TextElement, ArrowElement, UserEffect, LineElement, WheelAction, GroupElement, Board, VideoElement } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
 import { editImage, generateImageFromText, fetchImageAsBase64, ReferenceMaterial } from '../services/imageApi';
-import { modelApi, ModelInfo } from '../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
+import { cacheMediaUrl, getCachedMediaUrl, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
 const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 const IMAGE_SIZE_CACHE_KEY = 'imageEditor_selectedImageSize';
+// 与 CreatorHubPage 共享的图片模型缓存 key，两边保持同步
+const SHARED_IMAGE_MODEL_KEY = 'shared_image_model_id';
 const VIDEO_RATIO_CACHE_KEY = 'imageEditor_videoRatio';
 const IMAGE_EDITOR_VIDEO_GEN_CACHE_KEY = 'imageEditor_videoGen';
 const DEFAULT_IMAGE_SIZE = { width: 1024, height: 1024 };
@@ -499,6 +502,7 @@ const ImageEditorPage: React.FC = () => {
   const CURRENT_BOARD_KEY = 'imageEditor_currentBoardId';
 
   // 保存 boards 到 localStorage（排除 image 对象，只保存 href）
+  // 同时后台触发 IndexedDB 媒体缓存，确保 http URL 图片离线可用
   const saveBoardsToCache = useCallback((boardsToSave: Board[]) => {
     try {
       const serializedBoards = boardsToSave.map(board => ({
@@ -510,7 +514,17 @@ const ImageEditorPage: React.FC = () => {
         }))
       }));
       localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serializedBoards));
-      console.log('Boards 已缓存到 localStorage');
+
+      // 后台静默缓存所有 http 图片 URL 到 IndexedDB
+      const httpImageUrls: string[] = [];
+      for (const board of boardsToSave) {
+        for (const el of board.elements) {
+          if (el.type === 'image' && el.href && el.href.startsWith('http')) {
+            httpImageUrls.push(el.href);
+          }
+        }
+      }
+      if (httpImageUrls.length > 0) prefetchMediaUrls(httpImageUrls);
     } catch (error) {
       console.error('保存 boards 缓存失败:', error);
     }
@@ -650,6 +664,8 @@ const ImageEditorPage: React.FC = () => {
             const y = 200 + row * (displayHeight + spacing);
 
             addedUrls.add(imageUrl);
+            // 后台缓存到 IndexedDB（http URL 才需要，base64 已在内存中）
+            if (imageUrl.startsWith('http')) cacheMediaUrl(imageUrl).catch(() => {});
             elements.push({
               id: generateId(),
               type: 'image',
@@ -926,6 +942,8 @@ const ImageEditorPage: React.FC = () => {
   const [lassoElementId, setLassoElementId] = useState<string | null>(null);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number }>(() => loadCachedImageSize());
+  // ref 始终与 selectedImageSize 同步，供 setTimeout 闭包内读取最新值
+  const selectedImageSizeRef = useRef(loadCachedImageSize());
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
   const [showVipModal, setShowVipModal] = useState(false);
 
@@ -1005,12 +1023,23 @@ const ImageEditorPage: React.FC = () => {
 
   // 记录图片生成尺寸到本地缓存，下次进入编辑器沿用上次设置
   useEffect(() => {
+    selectedImageSizeRef.current = selectedImageSize;
     try {
       localStorage.setItem(IMAGE_SIZE_CACHE_KEY, JSON.stringify(selectedImageSize));
     } catch (error) {
       console.error('保存图片尺寸缓存失败:', error);
     }
   }, [selectedImageSize]);
+
+  // 选中的图片模型同步到共享缓存，与 CreatorHubPage 保持一致
+  useEffect(() => {
+    if (!selectedModel) return;
+    try {
+      localStorage.setItem(SHARED_IMAGE_MODEL_KEY, selectedModel);
+    } catch (error) {
+      console.error('保存共享图片模型缓存失败:', error);
+    }
+  }, [selectedModel]);
 
   // 记录视频生成比例到本地缓存，下次进入编辑器沿用上次设置
   useEffect(() => {
@@ -1495,12 +1524,15 @@ const ImageEditorPage: React.FC = () => {
     try {
       const response = await modelApi.getModelList();
       if (response.code === 200 && response.data) {
-        const imageModels = response.data.filter((model: ModelInfo) =>
-          model.category === 'text2image'
+        const imageModels = sortModelsByOrderBy(
+          response.data.filter((model: ModelInfo) => model.category === 'text2image')
         );
         setModels(imageModels);
         if (imageModels.length > 0 && !selectedModel) {
-          setSelectedModel(imageModels[0].id);
+          // 优先恢复共享缓存中的模型，否则用列表第一个
+          const cachedId = localStorage.getItem(SHARED_IMAGE_MODEL_KEY);
+          const matched = cachedId && imageModels.find((m: ModelInfo) => m.id === cachedId);
+          setSelectedModel(matched ? cachedId! : imageModels[0].id);
         }
       }
     } catch (error) {
@@ -1513,8 +1545,8 @@ const ImageEditorPage: React.FC = () => {
     try {
       const response = await modelApi.getModelList();
       if (response.code === 200 && response.data) {
-        const vidModels = response.data.filter((model: ModelInfo) =>
-          model.category === 'text2video'
+        const vidModels = sortModelsByOrderBy(
+          response.data.filter((model: ModelInfo) => model.category === 'text2video')
         );
         setVideoModels(vidModels);
       }
@@ -1885,6 +1917,20 @@ const ImageEditorPage: React.FC = () => {
         setPrompt(state.initialPrompt);
       }
 
+      // 从导航状态同步图片尺寸（ratio + resolution → selectedImageSize）
+      if (state.ratio && state.mode !== 'video') {
+        const ratioMap: Record<string, [number, number]> = {
+          '1:1': [1, 1], '16:9': [16, 9], '9:16': [9, 16], '4:3': [4, 3], '3:4': [3, 4],
+        };
+        const base = state.resolution === '4K' ? 4096 : state.resolution === '2K' ? 2048 : 1024;
+        const [rw, rh] = ratioMap[state.ratio] || [1, 1];
+        const newSize = rw >= rh
+          ? { width: base, height: Math.round(base * rh / rw) }
+          : { width: Math.round(base * rw / rh), height: base };
+        selectedImageSizeRef.current = newSize; // 立即更新 ref，setTimeout 闭包可读到
+        setSelectedImageSize(newSize);           // 更新 state，刷新 UI
+      }
+
       // 如果是视频模式，设置生成模式并调用视频生成
       if (state.mode === 'video') {
         setGenerateMode('video');
@@ -1912,8 +1958,12 @@ const ImageEditorPage: React.FC = () => {
         loadImages();
       } else if (state.initialPrompt?.trim()) {
         // 只有提示词，执行文生图
+        // 同步应用从 CreatorHub 传入的模型选择（state 更新是异步的，直接传参保证立即生效）
+        if (state.modelId && models.some((m: ModelInfo) => m.id === state.modelId)) {
+          setSelectedModel(state.modelId);
+        }
         setTimeout(() => {
-          handleGenerateImage(state.initialPrompt);
+          handleGenerateImage(state.initialPrompt, state.modelId || undefined);
         }, 300);
       }
     }
@@ -1960,14 +2010,23 @@ const ImageEditorPage: React.FC = () => {
     };
 
     // 只恢复单个画板，避免等待全部画板资源加载
+    // 图片优先从 IndexedDB 缓存读取，避免重新请求网络
     const restoreBoardElements = async (board: Board): Promise<Board> => {
       const restoredElements = await Promise.all(board.elements.map(async (el) => {
         if (el.type === 'image' && el.href && !el.image) {
+          // 优先使用 IndexedDB 缓存的 base64，没有则用原始 URL
+          const src = await getCachedMediaUrl(el.href);
           return new Promise<Element>((resolve) => {
             const img = new Image();
-            img.onload = () => resolve({ ...el, image: img });
-            img.onerror = () => resolve(el);
-            img.src = el.href || '';
+            img.onload = () => resolve({ ...el, href: src, image: img });
+            img.onerror = () => {
+              // 缓存失败时降级用原始 URL
+              const fallback = new Image();
+              fallback.onload = () => resolve({ ...el, image: fallback });
+              fallback.onerror = () => resolve(el);
+              fallback.src = el.href || '';
+            };
+            img.src = src;
           });
         }
         if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
@@ -2065,6 +2124,8 @@ const ImageEditorPage: React.FC = () => {
     };
 
     const initBoards = async () => {
+      // 启动时清理过期的 IndexedDB 媒体缓存
+      cleanExpiredCache().catch(() => {});
       const cachedBoards = loadBoardsFromCache();
       const cachedCurrentBoardId = loadCurrentBoardIdFromCache();
 
@@ -3054,7 +3115,7 @@ const ImageEditorPage: React.FC = () => {
   };
 
   // Handle text-to-image generation
-  const handleGenerateImage = async (originalPrompt: string) => {
+  const handleGenerateImage = async (originalPrompt: string, modelIdOverride?: string) => {
     if (!originalPrompt.trim()) {
       toast.error('请输入提示词');
       return;
@@ -3077,13 +3138,15 @@ const ImageEditorPage: React.FC = () => {
       const processedPrompt = processPromptForBackend(originalPrompt);
       const referenceMaterials = await buildReferenceMaterials(originalPrompt);
 
-      const selectedModelInfo = models.find(model => model.id === selectedModel);
+      // 优先使用外部传入的 modelIdOverride（如从 CreatorHub 跳转时携带的模型）
+      const activeModelId = modelIdOverride || selectedModel;
+      const selectedModelInfo = models.find(model => model.id === activeModelId);
       const modelName = selectedModelInfo?.modelName;
       const result = await generateImageFromText(
         processedPrompt,
         modelName,
         currentSessionId,
-        selectedImageSize,
+        selectedImageSizeRef.current,  // 读 ref，确保拿到最新值
         undefined,
         referenceMaterials
       );
@@ -5861,7 +5924,14 @@ const ImageEditorPage: React.FC = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                           </svg>
-                          <span>{currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length > 0 ? '编辑' : '生成'}</span>
+                          <span className="flex flex-col items-start leading-tight">
+                            <span>{currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length > 0 ? '编辑' : '生成'}</span>
+                            {selectedModelInfo && (
+                              <span className="text-[10px] font-normal opacity-80">
+                                {selectedModelInfo.modelPrice === 0 ? '免费' : `${selectedModelInfo.modelPrice} 积分`}
+                              </span>
+                            )}
+                          </span>
                         </>
                       )}
                     </>

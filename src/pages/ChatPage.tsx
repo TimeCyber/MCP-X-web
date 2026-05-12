@@ -10,7 +10,7 @@ import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { KnowledgeManager } from '../components/chat';
 import { McpManager } from '../components/chat/McpManager';
 import { chatApi, ChatMessageVo, streamChatSend, streamChatSendWithFiles } from '../services/chatApi';
-import { modelApi, ModelInfo } from '../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import config from '../config';
 import { toast } from '../utils/toast';
 import { ModelSelect } from '../components/chat/ModelSelect';
@@ -759,17 +759,30 @@ const ChatPageContent: React.FC = React.memo(() => {
       const response = await modelApi.getModelList();
       if (response.code === 200 && response.data) {
         // 过滤掉 text2video 类型的模型（忽略大小写）
-        const list = response.data.filter(
-          (m: ModelInfo) => !m.category?.toLowerCase().includes('video')
+        const list = sortModelsByOrderBy(
+          response.data.filter(
+            (m: ModelInfo) => !m.category?.toLowerCase().includes('video')
+          )
         );
         setModels(list);
         const cachedModelId = localStorage.getItem('selectedModelId');
-        const preferredId = cachedModelId || selectedModel;
-        const existsInList = preferredId && list.some((m: ModelInfo) => m.id === preferredId);
-        if (existsInList) {
-          if (preferredId !== selectedModel) {
-            setSelectedModel(preferredId as string);
-          }
+        const navState = location.state as { modelId?: string } | undefined;
+        const navModelId =
+          typeof navState?.modelId === 'string' && navState.modelId.trim()
+            ? navState.modelId.trim()
+            : '';
+        /** 优先级：跳转传入的模型（如 Creator Hub） > 本地缓存 > 当前 state */
+        let preferredId: string | null = null;
+        if (navModelId && list.some((m: ModelInfo) => m.id === navModelId)) {
+          preferredId = navModelId;
+        } else if (cachedModelId && list.some((m: ModelInfo) => m.id === cachedModelId)) {
+          preferredId = cachedModelId;
+        } else if (selectedModel && list.some((m: ModelInfo) => m.id === selectedModel)) {
+          preferredId = selectedModel;
+        }
+        if (preferredId !== null) {
+          setSelectedModel(preferredId);
+          localStorage.setItem('selectedModelId', preferredId);
         } else if (list.length > 0) {
           const firstId = list[0].id;
           setSelectedModel(firstId);
@@ -779,7 +792,7 @@ const ChatPageContent: React.FC = React.memo(() => {
     } catch (error) {
       console.error(t('errors.loadFailed'), error);
     }
-  }, [selectedModel]);
+  }, [selectedModel, location.state]);
 
   // 检查登录状态
   useEffect(() => {

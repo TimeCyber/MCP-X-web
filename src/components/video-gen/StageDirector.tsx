@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, Video, Image as ImageIcon, LayoutGrid, Sparkles, AlertCircle, MapPin, Clock, ChevronLeft, ChevronRight, MessageSquare, X, Film, Aperture, Maximize2, Trash2, Upload, Database, FolderOpen, Check, Edit2, Volume2, Plus, UserPlus, UserMinus, RefreshCw } from 'lucide-react';
 import type { VideoGenProject, Shot, Keyframe } from '../../types/videogen';
 import { generateImage, generateVideo, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, uploadFileToOss } from '../../services/videogenService';
-import { modelApi, ModelInfo } from '../../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 import { chatApi } from '../../services/chatApi';
 
 interface Props {
@@ -279,7 +279,9 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
           // 只显示 category 为 "text2video" 的模型
-          const vidModels = response.data.filter((m: ModelInfo) => m.category === 'text2video');
+          const vidModels = sortModelsByOrderBy(
+            response.data.filter((m: ModelInfo) => m.category === 'text2video')
+          );
           setVideoModels(vidModels);
           
           // 如果项目没有设置模型，使用默认模型
@@ -307,7 +309,9 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
           // 只显示 category 为 "text2image" 的模型
-          const imgModels = response.data.filter((m: ModelInfo) => m.category === 'text2image');
+          const imgModels = sortModelsByOrderBy(
+            response.data.filter((m: ModelInfo) => m.category === 'text2image')
+          );
           setImageModels(imgModels);
           
           // 如果项目没有设置模型，使用默认模型

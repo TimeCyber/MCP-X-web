@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BrainCircuit, Wand2, ChevronRight, AlertCircle, Users, MapPin, List, TextQuote, Clock, BookOpen, ArrowLeft, Aperture, Plus, Trash2, Layout, Film } from 'lucide-react';
 import type { VideoGenProject, Shot, Scene, Character } from '../../types/videogen';
 import { parseScriptToData, generateShotList } from '../../services/videogenService';
-import { modelApi, ModelInfo } from '../../services/modelApi';
+import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 
 interface Props {
   project: VideoGenProject;
@@ -176,8 +176,10 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
           // 只显示 category 为 "chat" 或 "deepseek" 的模型
-          const chatModels = response.data.filter((m: ModelInfo) =>
-            m.category === 'chat' || m.category === 'deepseek'
+          const chatModels = sortModelsByOrderBy(
+            response.data.filter((m: ModelInfo) =>
+              m.category === 'chat' || m.category === 'deepseek'
+            )
           );
           setModels(chatModels);
 
@@ -215,17 +217,14 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
     setLocalVideoType(newVideoType);
     updateProject({ videoType: newVideoType });
 
-    // 检查当前脚本是否是任何默认示例的变体（通过标题判断）
+    // 只有当前脚本是空的或与某个默认示例完全一致时，才替换为新类型的默认脚本
+    // 用精确匹配，避免误替换用户自己输入的文案
     const isUsingDefaultScript =
-      localScript.includes('标题：雨夜侦探') ||
-      localScript.includes('标题：高端护肤品宣传片') ||
-      localScript.includes('标题：美食探店短视频') ||
       localScript.trim() === '' ||
       localScript === getDefaultScriptForVideoType('script') ||
       localScript === getDefaultScriptForVideoType('promotional') ||
       localScript === getDefaultScriptForVideoType('shortvideo');
 
-    // 如果使用的是默认脚本，则切换到新类型的默认脚本
     if (isUsingDefaultScript) {
       setLocalScript(getDefaultScriptForVideoType(newVideoType));
     }
@@ -245,6 +244,11 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
   const handleAnalyze = async () => {
     // 如果已经在解析中，不再重复触发
     if (isProcessing) return;
+
+    // 已有分镜时，二次确认是否重新生成
+    if (project.shots && project.shots.length > 0) {
+      if (!confirm('已有生成的分镜，重新生成将覆盖现有内容，确定继续吗？')) return;
+    }
     
     if (!localScript.trim()) {
       setError("请输入剧本内容。");
@@ -643,12 +647,30 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
           </button>
 
           <button
-            onClick={handleEnterManualMode}
-            className="w-full mt-3 py-2.5 font-bold text-[10px] tracking-widest uppercase rounded-lg flex items-center justify-center gap-2 transition-all bg-transparent border border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900"
+            onClick={() => {
+              if (project.shots && project.shots.length > 0) {
+                if (!confirm('进入手动编辑模式将清空已生成的分镜，确定继续吗？')) return;
+              }
+              handleEnterManualMode();
+            }}
+            disabled={isProcessing}
+            className={`w-full mt-3 py-2.5 font-bold text-[10px] tracking-widest uppercase rounded-lg flex items-center justify-center gap-2 transition-all bg-transparent border ${isProcessing ? 'border-zinc-800 text-zinc-700 cursor-not-allowed opacity-50' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900'}`}
           >
             <Layout className="w-3 h-3" />
             手动编辑模式 (空白)
           </button>
+
+          {/* 已有分镜时显示「查看分镜」快捷入口 */}
+          {project.shots && project.shots.length > 0 && (
+            <button
+              onClick={() => setActiveTab('script')}
+              disabled={isProcessing}
+              className={`w-full mt-3 py-2.5 font-bold text-[10px] tracking-widest uppercase rounded-lg flex items-center justify-center gap-2 transition-all ${isProcessing ? 'bg-indigo-500/5 border border-indigo-500/10 text-indigo-700 cursor-not-allowed opacity-50' : 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/50 hover:text-indigo-300'}`}
+            >
+              <List className="w-3 h-3" />
+              查看已生成分镜 ({project.shots.length} 个)
+            </button>
+          )}
 
           {error && (
             <div className="mt-4 p-3 bg-red-900/10 border border-red-900/50 text-red-500 text-xs rounded flex items-center gap-2">
@@ -826,7 +848,11 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
           </div>
 
           <button
-            onClick={() => setActiveTab('story')}
+            onClick={() => {
+              // 切回编辑时，确保显示的是已保存的原始文案
+              setLocalScript(project.rawScript || localScript);
+              setActiveTab('story');
+            }}
             className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-2 px-4 py-2 hover:bg-zinc-800 rounded-lg transition-all"
           >
             <ArrowLeft className="w-3 h-3" />

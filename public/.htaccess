@@ -7,9 +7,9 @@ RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# www 重定向到非 www（可选，根据需要调整）
-RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
-RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
+# www 重定向到非 www（已禁用，统一使用不带 www 的地址）
+# RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+# RewriteRule ^(.*)$ https://%1/$1 [R=301,L]
 
 # SPA 路由支持
 RewriteCond %{REQUEST_FILENAME} !-f

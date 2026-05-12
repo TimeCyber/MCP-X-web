@@ -415,6 +415,16 @@ export const chatToGenCode = async (
   }
 };
 
+// 直接写入文件内容（绕过 AI，后端需提供对应端点 /app/webgen/file/save）
+export const saveFileContent = async (appId: string, filePath: string, content: string): Promise<{ code: number; msg?: string }> => {
+  const response = await apiClient.post('/app/webgen/file/save', {
+    appId,
+    filePath,
+    content,
+  });
+  return response.data;
+};
+
 // 获取聊天历史
 export const getChatHistory = async (params: {
   appId: string;

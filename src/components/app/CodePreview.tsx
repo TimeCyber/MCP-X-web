@@ -30,6 +30,12 @@ interface CodePreviewProps {
   onClearLogs?: () => void;
   logsLoading?: boolean;
   onRefreshLogs?: () => void;
+  /** 直接编辑：文字修改完成后的回调 */
+  onDirectTextEdit?: (selector: string, oldText: string, newText: string) => void;
+  /** 直接编辑：拖拽重排完成后的回调 */
+  onDirectDragReorder?: (movedSelector: string, referenceSelector: string, position: 'before' | 'after') => void;
+  /** 暴露 iframe ref 给父组件（用于导出等操作） */
+  iframeRef?: React.RefObject<HTMLIFrameElement>;
 }
 
 export const CodePreview: React.FC<CodePreviewProps> = ({
@@ -50,10 +56,16 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   onClearLogs,
   logsLoading = false,
   onRefreshLogs,
+  onDirectTextEdit,
+  onDirectDragReorder,
+  iframeRef: externalIframeRef,
 }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const internalIframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeRef = externalIframeRef || internalIframeRef;
   const isSrcdocInjectedRef = useRef(false); // 防止跨域 srcdoc 注入后重复处理
   const [previewReady, setPreviewReady] = useState(false);
+  /** 直接编辑子模式（true=直接编辑，false=AI选中） */
+  const [directEditMode, setDirectEditMode] = useState(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'code' | 'logs'>('preview');
   const [codeText, setCodeText] = useState('');
   const [loadingCode, setLoadingCode] = useState(false);
@@ -84,7 +96,8 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   const EDITOR_SCRIPT_CONTENT = `(function() {
   if (window.__mcpxEditorInjected) return;
   window.__mcpxEditorInjected = true;
-  // 拦截 console.error 和 console.warn，转发给父窗口
+
+  /* ===== Console forwarding ===== */
   try {
     var _origError = console.error;
     var _origWarn = console.warn;
@@ -103,9 +116,27 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       try { window.parent.postMessage({ type: 'console_error', message: 'Unhandled Promise: ' + (ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)) }, '*'); } catch(e) {}
     });
   } catch(e) {}
+
+  /* ===== State ===== */
   var isEditModeActive = false;
+  var isDirectEditActive = false;
   var overlay = null;
   var mouseMoveHandler = null;
+  /* direct-edit text state */
+  var activeTextEl = null;
+  var activeTextOld = '';
+  /* direct-edit drag state */
+  var dragEl = null;
+  var dragGhost = null;
+  var dropLine = null;
+  var dragOffsetX = 0, dragOffsetY = 0;
+  var dragStarted = false;
+  var dropTarget = null;
+  var dropBefore = true;
+  var DRAG_THRESHOLD = 5;
+  var TEXT_TAGS = {P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,SPAN:1,A:1,BUTTON:1,LI:1,TD:1,TH:1,LABEL:1,DIV:1};
+
+  /* ===== Shared helpers ===== */
   function createOverlay() {
     overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;border:2px solid #1890ff;background:rgba(24,144,255,0.1);pointer-events:none;z-index:10000;transition:all 0.1s ease;';
@@ -122,7 +153,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   }
   function cssEscape(s) {
     try { if (window.CSS && CSS.escape) return CSS.escape(s); } catch(e) {}
-      return String(s).replace(/([!"#$%&'()*+,./:;<=>?@\\[\\\\\\]^\`{|}~])/g,'\\\\$1');
+    return String(s).replace(/([!"#$%&'()*+,./:;<=>?@\\[\\\\\\]^\`{|}~])/g,'\\\\$1');
   }
   function generateSelector(el) {
     if (el.id) return '#' + cssEscape(el.id);
@@ -135,8 +166,10 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
     }
     return sel;
   }
-  function handleClick(e) {
-    if (!isEditModeActive) return;
+
+  /* ===== AI Select Mode ===== */
+  function handleAIClick(e) {
+    if (!isEditModeActive || isDirectEditActive) return;
     e.preventDefault(); e.stopPropagation();
     var el = e.target;
     if (!el || el === document.body || el === document.documentElement) return;
@@ -150,26 +183,211 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       pagePath: window.location.pathname
     }}, '*');
   }
+
+  /* ===== Direct Edit: Text Editing ===== */
+  function commitTextEdit() {
+    if (!activeTextEl) return;
+    var el = activeTextEl;
+    var newText = el.innerText !== undefined ? el.innerText : (el.textContent || '');
+    el.removeAttribute('contenteditable');
+    el.removeAttribute('spellcheck');
+    el.style.outline = '';
+    el.style.minWidth = '';
+    var old = activeTextOld;
+    activeTextEl = null;
+    activeTextOld = '';
+    if (newText.trim() !== old.trim()) {
+      window.parent.postMessage({ type: 'directTextEdit', selector: generateSelector(el), oldText: old, newText: newText }, '*');
+    }
+  }
+  function cancelTextEdit() {
+    if (!activeTextEl) return;
+    var el = activeTextEl;
+    if (el.innerText !== undefined) { el.innerText = activeTextOld; } else { el.textContent = activeTextOld; }
+    el.removeAttribute('contenteditable');
+    el.removeAttribute('spellcheck');
+    el.style.outline = '';
+    el.style.minWidth = '';
+    activeTextEl = null;
+    activeTextOld = '';
+  }
+  function startTextEdit(el) {
+    if (activeTextEl) commitTextEdit();
+    activeTextEl = el;
+    activeTextOld = el.innerText !== undefined ? el.innerText : (el.textContent || '');
+    el.setAttribute('contenteditable', 'true');
+    el.setAttribute('spellcheck', 'false');
+    el.style.outline = '2px solid #1890ff';
+    el.style.minWidth = '20px';
+    el.focus();
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch(ex) {}
+  }
+  function handleDblClick(e) {
+    if (!isDirectEditActive || !isEditModeActive) return;
+    var el = e.target;
+    while (el && el !== document.body) {
+      if (TEXT_TAGS[el.tagName]) break;
+      el = el.parentElement;
+    }
+    if (!el || el === document.body) return;
+    e.preventDefault(); e.stopPropagation();
+    startTextEdit(el);
+  }
+  function handleEditKeyDown(e) {
+    if (!activeTextEl) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelTextEdit(); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); commitTextEdit(); }
+  }
+  function handleDocClickForCommit(e) {
+    if (!activeTextEl) return;
+    if (!activeTextEl.contains(e.target)) commitTextEdit();
+  }
+
+  /* ===== Direct Edit: Drag to Reorder ===== */
+  function createDragGhost(el) {
+    var ghost = el.cloneNode(true);
+    var r = el.getBoundingClientRect();
+    ghost.style.cssText = 'position:fixed;opacity:0.55;pointer-events:none;z-index:20000;width:' + r.width + 'px;box-shadow:0 4px 16px rgba(0,0,0,0.2);left:' + r.left + 'px;top:' + r.top + 'px;';
+    document.body.appendChild(ghost);
+    return ghost;
+  }
+  function createDropLine() {
+    var line = document.createElement('div');
+    line.style.cssText = 'position:fixed;height:3px;background:#1890ff;border-radius:2px;z-index:19999;pointer-events:none;display:none;box-shadow:0 0 4px rgba(24,144,255,0.5);';
+    document.body.appendChild(line);
+    return line;
+  }
+  function showDropLine(targetEl, before) {
+    if (!dropLine) return;
+    var r = targetEl.getBoundingClientRect();
+    dropLine.style.display = 'block';
+    dropLine.style.width = r.width + 'px';
+    dropLine.style.left = r.left + 'px';
+    dropLine.style.top = (before ? r.top - 2 : r.bottom - 1) + 'px';
+  }
+  function handleDragMove(e) {
+    if (!dragGhost || !dragStarted) return;
+    dragGhost.style.left = (e.clientX - dragOffsetX) + 'px';
+    dragGhost.style.top = (e.clientY - dragOffsetY) + 'px';
+    var siblings = dragEl && dragEl.parentElement
+      ? Array.from(dragEl.parentElement.children).filter(function(c){ return c !== dragEl; })
+      : [];
+    var found = null, before = true;
+    for (var i = 0; i < siblings.length; i++) {
+      var r = siblings[i].getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (e.clientX >= r.left - 20 && e.clientX <= r.right + 20 && e.clientY >= r.top - 10 && e.clientY <= r.bottom + 10) {
+        found = siblings[i];
+        before = (e.clientY - r.top) < r.height / 2;
+        break;
+      }
+    }
+    if (found) { dropTarget = found; dropBefore = before; showDropLine(found, before); }
+    else { dropTarget = null; if (dropLine) dropLine.style.display = 'none'; }
+  }
+  function finishDrag(e) {
+    document.removeEventListener('mousemove', handleDragMove, true);
+    document.removeEventListener('mouseup', finishDrag, true);
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    if (dropLine) { dropLine.remove(); dropLine = null; }
+    if (dragEl) dragEl.style.opacity = '';
+    if (dragStarted && dragEl && dropTarget && dragEl.parentElement) {
+      var movedSel = generateSelector(dragEl);
+      var refSel = generateSelector(dropTarget);
+      if (dropBefore) { dragEl.parentElement.insertBefore(dragEl, dropTarget); }
+      else { dragEl.parentElement.insertBefore(dragEl, dropTarget.nextSibling || null); }
+      window.parent.postMessage({ type: 'directDragReorder', movedSelector: movedSel, referenceSelector: refSel, position: dropBefore ? 'before' : 'after' }, '*');
+    }
+    dragEl = null; dragStarted = false; dropTarget = null;
+  }
+  function handleDragMouseDown(e) {
+    if (!isDirectEditActive || !isEditModeActive) return;
+    if (activeTextEl) return;
+    if (e.button !== 0) return;
+    var el = e.target;
+    if (!el || el === document.body || el === document.documentElement) return;
+    if (el.contentEditable === 'true') return;
+    var startX = e.clientX, startY = e.clientY;
+    var r = el.getBoundingClientRect();
+    dragEl = el;
+    dragStarted = false;
+    dragOffsetX = startX - r.left;
+    dragOffsetY = startY - r.top;
+    var onMove = function(ev) {
+      if (!dragEl) return;
+      var dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!dragStarted && Math.sqrt(dx*dx + dy*dy) > DRAG_THRESHOLD) {
+        dragStarted = true;
+        dragEl.style.opacity = '0.35';
+        dragGhost = createDragGhost(dragEl);
+        dropLine = createDropLine();
+      }
+      if (dragStarted) handleDragMove(ev);
+    };
+    var onUp = function(ev) {
+      document.removeEventListener('mousemove', onMove, true);
+      document.removeEventListener('mouseup', onUp, true);
+      if (!dragStarted) { dragEl = null; return; }
+      finishDrag(ev);
+    };
+    document.addEventListener('mousemove', onMove, true);
+    document.addEventListener('mouseup', onUp, true);
+  }
+
+  /* ===== Mode Activation ===== */
+  function enterMode(direct) {
+    exitMode();
+    isEditModeActive = true;
+    isDirectEditActive = direct;
+    if (!overlay) createOverlay();
+    mouseMoveHandler = function(ev) {
+      if (!isEditModeActive) return;
+      var t = ev.target;
+      if (t && t !== document.body && t !== document.documentElement && (!activeTextEl || !activeTextEl.contains(t))) {
+        updateOverlay(t);
+      }
+    };
+    document.addEventListener('mousemove', mouseMoveHandler, true);
+    if (direct) {
+      document.addEventListener('dblclick', handleDblClick, true);
+      document.addEventListener('keydown', handleEditKeyDown, true);
+      document.addEventListener('click', handleDocClickForCommit, true);
+      document.addEventListener('mousedown', handleDragMouseDown, true);
+      document.body.style.cursor = 'default';
+    } else {
+      document.addEventListener('click', handleAIClick, true);
+      document.body.style.cursor = 'crosshair';
+    }
+  }
+  function exitMode() {
+    cancelTextEdit();
+    document.removeEventListener('click', handleAIClick, true);
+    document.removeEventListener('dblclick', handleDblClick, true);
+    document.removeEventListener('keydown', handleEditKeyDown, true);
+    document.removeEventListener('click', handleDocClickForCommit, true);
+    document.removeEventListener('mousedown', handleDragMouseDown, true);
+    if (mouseMoveHandler) { document.removeEventListener('mousemove', mouseMoveHandler, true); mouseMoveHandler = null; }
+    if (overlay) { overlay.remove(); overlay = null; }
+    document.body.style.cursor = '';
+    isEditModeActive = false;
+    isDirectEditActive = false;
+  }
+
+  /* ===== Message Handler ===== */
   window.addEventListener('message', function(e) {
     if (!e.data) return;
     if (e.data.type === 'toggleEditMode') {
-      isEditModeActive = e.data.enabled;
-      if (isEditModeActive) {
-        if (!overlay) createOverlay();
-        document.addEventListener('click', handleClick, true);
-        mouseMoveHandler = function(ev) {
-          if (!isEditModeActive) return;
-          var t = ev.target;
-          if (t && t !== document.body && t !== document.documentElement) updateOverlay(t);
-        };
-        document.addEventListener('mousemove', mouseMoveHandler, true);
-        document.body.style.cursor = 'crosshair';
-      } else {
-        document.removeEventListener('click', handleClick, true);
-        if (mouseMoveHandler) { document.removeEventListener('mousemove', mouseMoveHandler, true); mouseMoveHandler = null; }
-        if (overlay) { overlay.remove(); overlay = null; }
-        document.body.style.cursor = '';
-      }
+      if (e.data.enabled) { enterMode(isDirectEditActive); }
+      else { exitMode(); }
+    } else if (e.data.type === 'setDirectEditMode') {
+      isDirectEditActive = e.data.enabled;
+      if (isEditModeActive) enterMode(isDirectEditActive);
     } else if (e.data.type === 'clearSelection') {
       if (overlay) overlay.style.display = 'none';
     }
@@ -195,6 +413,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       }
       setTimeout(() => {
         iframeRef.current?.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
+        iframeRef.current?.contentWindow?.postMessage({ type: 'setDirectEditMode', enabled: directEditMode }, '*');
         if (!selectedElementInfo) {
           iframeRef.current?.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
         }
@@ -215,6 +434,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       // srcdoc 已写入，这次是 srcdoc 加载完成，发送初始状态即可
       setTimeout(() => {
         iframeRef.current?.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
+        iframeRef.current?.contentWindow?.postMessage({ type: 'setDirectEditMode', enabled: directEditMode }, '*');
         if (!selectedElementInfo) {
           iframeRef.current?.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
         }
@@ -279,39 +499,56 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
     }
   };
 
+  // isEditMode 关闭时重置直接编辑子模式
+  useEffect(() => {
+    if (!isEditMode) setDirectEditMode(false);
+  }, [isEditMode]);
+
   // 监听来自iframe的消息
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data.type === 'elementSelected' && onElementSelected) {
         onElementSelected(event.data.data);
       }
+      if (event.data.type === 'directTextEdit' && onDirectTextEdit) {
+        onDirectTextEdit(event.data.selector, event.data.oldText, event.data.newText);
+      }
+      if (event.data.type === 'directDragReorder' && onDirectDragReorder) {
+        onDirectDragReorder(event.data.movedSelector, event.data.referenceSelector, event.data.position);
+      }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onElementSelected]);
+  }, [onElementSelected, onDirectTextEdit, onDirectDragReorder]);
 
   // 向iframe发送编辑模式切换消息
   useEffect(() => {
     if (previewReady && iframeRef.current) {
       try {
-        iframeRef.current.contentWindow?.postMessage({
-          type: 'toggleEditMode',
-          enabled: isEditMode,
-        }, '*');
+        iframeRef.current.contentWindow?.postMessage({ type: 'toggleEditMode', enabled: isEditMode }, '*');
       } catch (error) {
         console.warn('无法发送编辑模式消息:', error);
       }
     }
   }, [isEditMode, previewReady]);
 
+  // 向iframe发送直接编辑子模式切换消息
+  useEffect(() => {
+    if (previewReady && iframeRef.current) {
+      try {
+        iframeRef.current.contentWindow?.postMessage({ type: 'setDirectEditMode', enabled: directEditMode }, '*');
+      } catch (error) {
+        console.warn('无法发送直接编辑模式消息:', error);
+      }
+    }
+  }, [directEditMode, previewReady]);
+
   // 发送清除选择消息
   useEffect(() => {
     if (previewReady && iframeRef.current && !selectedElementInfo) {
       try {
-        iframeRef.current.contentWindow?.postMessage({
-          type: 'clearSelection',
-        }, '*');
+        iframeRef.current.contentWindow?.postMessage({ type: 'clearSelection' }, '*');
       } catch (error) {
         console.warn('无法发送清除选择消息:', error);
       }

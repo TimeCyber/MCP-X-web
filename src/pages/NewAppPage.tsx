@@ -18,20 +18,46 @@ interface NewAppPageLocationState {
 
 const examplePrompts = [
   {
-    title: '个人作品集网站',
-    prompt: '创建一个个人作品集网站，包含首页、关于我、项目展示、技能介绍和联系方式页面。使用现代简洁的设计风格，响应式布局，深色主题。',
+    category: '网页',
+    items: [
+      {
+        title: '个人作品集网站',
+        prompt: '创建一个个人作品集网站，包含首页、关于我、项目展示、技能介绍和联系方式页面。使用现代简洁的设计风格，响应式布局，深色主题。',
+      },
+      {
+        title: '公司官网',
+        prompt: '设计一个科技公司官网，包含公司介绍、产品服务、团队介绍、新闻动态和联系我们。采用专业的商务风格，蓝白色调，包含轮播图和产品卡片。',
+      },
+      {
+        title: '餐厅网站',
+        prompt: '制作一个餐厅网站，展示菜单、餐厅环境、预订功能和联系信息。温馨的设计风格，美食图片展示，在线订餐功能。',
+      },
+      {
+        title: '在线学习平台',
+        prompt: '构建一个在线学习平台，包含课程列表、课程详情、学习进度、用户中心。现代化的教育风格设计，课程卡片布局。',
+      },
+    ],
   },
   {
-    title: '公司官网',
-    prompt: '设计一个科技公司官网，包含公司介绍、产品服务、团队介绍、新闻动态和联系我们。采用专业的商务风格，蓝白色调，包含轮播图和产品卡片。',
-  },
-  {
-    title: '餐厅网站',
-    prompt: '制作一个餐厅网站，展示菜单、餐厅环境、预订功能和联系信息。温馨的设计风格，美食图片展示，在线订餐功能。',
-  },
-  {
-    title: '在线学习平台',
-    prompt: '构建一个在线学习平台，包含课程列表、课程详情、学习进度、用户中心。现代化的教育风格设计，课程卡片布局。',
+    category: 'PPT',
+    items: [
+      {
+        title: '年终工作总结',
+        prompt: '制作一份年终工作总结PPT，包含年度亮点、核心数据、项目成果、团队贡献、问题与改进、明年计划共6页。商务蓝色主题，图表与文字结合，简洁大气。',
+      },
+      {
+        title: '产品发布演示',
+        prompt: '创建一份新产品发布PPT，包含产品背景、核心功能介绍、技术亮点、市场定位、用户案例、价格方案共6页。科技感设计，深色背景，突出产品卖点。',
+      },
+      {
+        title: '项目提案报告',
+        prompt: '制作一份项目提案PPT，包含项目背景与痛点、解决方案、实施计划、预期收益、风险评估、资源需求共6页。专业商务风格，逻辑清晰，数据可视化。',
+      },
+      {
+        title: '培训课程课件',
+        prompt: '设计一套员工培训PPT课件，主题为时间管理与效率提升，包含课程目标、核心理论、实用方法、案例分析、练习互动、总结回顾共6页。活泼清新风格，图文并茂。',
+      },
+    ],
   },
 ];
 
@@ -46,6 +72,7 @@ export const NewAppPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [myApps, setMyApps] = useState<AppInfo[]>([]);
   const [myAppsLoading, setMyAppsLoading] = useState(false);
+  const [activeCategory, setActiveCategory] = useState(examplePrompts[0].category);
   const userId = localStorage.getItem('userId');
 
   const formatTime = (timeString: string) => {
@@ -214,16 +241,34 @@ export const NewAppPage: React.FC = () => {
               </div>
 
           {/* 示例提示词（以气泡/按钮样式展示） */}
-              <div>
-                <h3 className="text-sm font-medium text-slate-700 mb-3">示例提示词</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {examplePrompts.map((example, index) => (
+          <div>
+            <div className="flex items-center gap-3 mb-3 flex-wrap">
+              <h3 className="text-sm font-medium text-slate-700 shrink-0">{currentLanguage === 'zh' ? '示例提示词' : 'Examples'}</h3>
+              <div className="flex gap-1.5">
+                {examplePrompts.map((group) => (
+                  <button
+                    key={group.category}
+                    type="button"
+                    onClick={() => setActiveCategory(group.category)}
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                      activeCategory === group.category
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:text-blue-600'
+                    }`}
+                  >
+                    {group.category}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {examplePrompts.find(g => g.category === activeCategory)?.items.map((example, index) => (
                 <button
                   type="button"
-                      key={index}
+                  key={index}
                   className="text-left p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors"
-                      onClick={() => useExamplePrompt(example.prompt)}
-                    >
+                  onClick={() => useExamplePrompt(example.prompt)}
+                >
                   <h4 className="text-sm font-medium mb-1">{example.title}</h4>
                   <p className="text-xs text-slate-600 line-clamp-2">{example.prompt.substring(0, 100)}...</p>
                 </button>
