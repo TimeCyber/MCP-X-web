@@ -3261,9 +3261,10 @@ const ImageEditorPage: React.FC = () => {
 
   // Handle image editing
   const handleEditImage = async (prompt: string) => {
-    const selectedImages = currentElements.filter(el =>
-      selectedElementIds.includes(el.id) && el.type === 'image'
-    ) as ImageElement[];
+    // 按用户选中的顺序排列图片（selectedElementIds 记录了点击顺序）
+    const selectedImages = selectedElementIds
+      .map(id => currentElements.find(el => el.id === id && el.type === 'image'))
+      .filter((el): el is ImageElement => !!el);
 
     if (selectedImages.length === 0) {
       toast.error('请选择要编辑的图片');
