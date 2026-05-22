@@ -112,6 +112,91 @@ export const prefetchMediaUrls = (urls: string[]): void => {
 /**
  * 清理过期缓存（可在应用启动时调用一次）
  */
+/** 已成功解码的 Image（按原始 href 去重） */
+const loadedImageCache = new Map<string, HTMLImageElement>();
+/** 进行中的加载（同一 URL 只发起一次请求） */
+const inFlightImageLoads = new Map<string, Promise<HTMLImageElement | null>>();
+
+const IMAGE_LOAD_TIMEOUT_MS = 20000;
+
+const decodeImageFromSrc = (src: string): Promise<HTMLImageElement | null> =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = window.setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
+      resolve(null);
+    }, IMAGE_LOAD_TIMEOUT_MS);
+    img.onload = () => {
+      window.clearTimeout(timer);
+      resolve(img);
+    };
+    img.onerror = () => {
+      window.clearTimeout(timer);
+      resolve(null);
+    };
+    img.src = src;
+  });
+
+/**
+ * 加载图片：IndexedDB 缓存优先 → 网络拉取并写入缓存 → 回退原始 URL。
+ * 同一 URL 并发只加载一次，避免重复请求。
+ */
+export const loadMediaImage = async (url: string): Promise<HTMLImageElement | null> => {
+  const key = (url || '').trim();
+  if (!key) return null;
+
+  const cachedImg = loadedImageCache.get(key);
+  if (cachedImg) return cachedImg;
+
+  const inFlight = inFlightImageLoads.get(key);
+  if (inFlight) return inFlight;
+
+  const task = (async (): Promise<HTMLImageElement | null> => {
+    if (key.startsWith('data:') || key.startsWith('blob:')) {
+      const img = await decodeImageFromSrc(key);
+      if (img) loadedImageCache.set(key, img);
+      return img;
+    }
+
+    try {
+      const cachedDataUrl = await getCachedMediaUrl(key);
+      let img = await decodeImageFromSrc(cachedDataUrl);
+      if (img) {
+        loadedImageCache.set(key, img);
+        if (cachedDataUrl !== key) loadedImageCache.set(cachedDataUrl, img);
+        return img;
+      }
+
+      const dataUrl = await cacheMediaUrl(key);
+      img = await decodeImageFromSrc(dataUrl);
+      if (img) {
+        loadedImageCache.set(key, img);
+        if (dataUrl !== key) loadedImageCache.set(dataUrl, img);
+        return img;
+      }
+
+      img = await decodeImageFromSrc(key);
+      if (img) loadedImageCache.set(key, img);
+      return img;
+    } catch (err) {
+      console.warn('[mediaCache] loadMediaImage failed:', key, err);
+      const img = await decodeImageFromSrc(key);
+      if (img) loadedImageCache.set(key, img);
+      return img;
+    }
+  })();
+
+  inFlightImageLoads.set(key, task);
+  try {
+    return await task;
+  } finally {
+    inFlightImageLoads.delete(key);
+  }
+};
+
 export const cleanExpiredCache = async (): Promise<void> => {
   try {
     const db = await openDB();

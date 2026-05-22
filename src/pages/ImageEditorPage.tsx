@@ -15,7 +15,7 @@ import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
-import { cacheMediaUrl, getCachedMediaUrl, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
+import { cacheMediaUrl, loadMediaImage, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
@@ -287,6 +287,14 @@ const drawElement = (ctx: CanvasRenderingContext2D, element: Element, offsetX: n
           ctx.clip();
         }
         ctx.drawImage(element.image, element.x, element.y, element.width, element.height);
+      } else if ((element as ImageElement).href) {
+        ctx.fillStyle = '#1f2937';
+        ctx.fillRect(element.x, element.y, element.width, element.height);
+        ctx.fillStyle = '#9ca3af';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('加载中…', element.x + element.width / 2, element.y + element.height / 2);
+        ctx.textAlign = 'left';
       }
       break;
     }
@@ -566,64 +574,50 @@ const ImageEditorPage: React.FC = () => {
 
   // 从聊天记录中解析图片和视频元素（只解析 AI 返回的内容）
   const parseImagesFromMessages = useCallback(async (messages: any[]): Promise<Element[]> => {
-    const elements: Element[] = [];
-    let positionOffset = 0;
-    const addedUrls = new Set<string>(); // 全局去重，避免同一 URL 重复上画布
+    const addedUrls = new Set<string>();
+
+    // ── 阶段一：遍历所有消息，收集全部唯一 URL（不做任何网络请求）──
+    const imageUrlsToLoad: string[] = [];
+    const videoUrlsToLoad: string[] = [];
 
     for (const msg of messages) {
       if (!msg.content) continue;
-
       const content = msg.content;
       const imageUrls: string[] = [];
       const videoUrls: string[] = [];
 
       if (msg.role === 'assistant') {
-        // 1. 解析 <images> 标签中的图片URL
         const imagesTagMatches = content.matchAll(/<images>(.*?)<\/images>/gs);
         for (const match of imagesTagMatches) {
           const url = match[1]?.trim();
-          if (url && (url.startsWith('http') || url.startsWith('data:'))) {
-            imageUrls.push(url);
-          }
+          if (url && (url.startsWith('http') || url.startsWith('data:'))) imageUrls.push(url);
         }
-
-        // 2. 解析 <video> 标签中的视频URL
         const videoTagMatches = content.matchAll(/<video>(.*?)<\/video>/gs);
         for (const match of videoTagMatches) {
           const url = match[1]?.trim();
-          if (url && url.startsWith('http')) {
-            videoUrls.push(url);
-          }
+          if (url && url.startsWith('http')) videoUrls.push(url);
         }
-
-        // 3. 解析直接的图片 URL
         const urlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
         for (const match of urlMatches) {
           const url = match[1];
           if (url && !imageUrls.includes(url)) imageUrls.push(url);
         }
-
-        // 4. 解析直接的视频 URL
         const videoUrlMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi);
         for (const match of videoUrlMatches) {
           const url = match[1];
           if (url && !videoUrls.includes(url)) videoUrls.push(url);
         }
-
-        // 5. 解析 base64 图片（assistant 消息中的）
         const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
         for (const match of base64Matches) {
           const url = match[1];
           if (url && !imageUrls.includes(url)) imageUrls.push(url);
         }
       } else if (msg.role === 'user') {
-        // 用户消息：解析上传的 base64 图片（本地上传的图片存在 user 消息里）
         const base64Matches = content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g);
         for (const match of base64Matches) {
           const url = match[1];
           if (url && !imageUrls.includes(url)) imageUrls.push(url);
         }
-        // 用户消息中的 http 图片 URL
         const httpImgMatches = content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi);
         for (const match of httpImgMatches) {
           const url = match[1];
@@ -631,148 +625,88 @@ const ImageEditorPage: React.FC = () => {
         }
       }
 
-        // 加载所有找到的图片
-        for (const imageUrl of imageUrls) {
-          if (addedUrls.has(imageUrl)) continue;
-          try {
-            // 加载图片获取尺寸（直接使用 Image 对象，避免 CORS 问题）
-            const img = new Image();
-            // 对于外部 URL，不设置 crossOrigin 以避免 CORS 错误
-            await new Promise<void>((resolve, reject) => {
-              img.onload = () => resolve();
-              img.onerror = () => reject(new Error('图片加载失败'));
-              img.src = imageUrl;
-            });
+      for (const url of imageUrls) {
+        if (!addedUrls.has(url)) { addedUrls.add(url); imageUrlsToLoad.push(url); }
+      }
+      for (const url of videoUrls) {
+        if (!addedUrls.has(url)) { addedUrls.add(url); videoUrlsToLoad.push(url); }
+      }
+    }
 
-            // 限制图片显示尺寸，避免过大
-            const maxDisplaySize = 800;
-            let displayWidth = img.width;
-            let displayHeight = img.height;
-            
-            if (img.width > maxDisplaySize || img.height > maxDisplaySize) {
-              const scale = Math.min(maxDisplaySize / img.width, maxDisplaySize / img.height);
-              displayWidth = img.width * scale;
-              displayHeight = img.height * scale;
-            }
+    const maxDisplaySize = 800;
+    // ── 阶段二：先创建占位元素（仅 href），图片由 hydrate 异步加载到画布 ──
+    const elements: Element[] = [];
+    let positionOffset = 0;
+    const defaultSize = 512;
+    const columnsPerRow = 5;
 
-            // 计算图片位置，避免重叠 - 横向排布5张图片
-            const columnsPerRow = 5;
-            const row = Math.floor(positionOffset / columnsPerRow);
-            const col = positionOffset % columnsPerRow;
-            const spacing = 100; // 图片之间的间距
-            const x = 200 + col * (displayWidth + spacing);
-            const y = 200 + row * (displayHeight + spacing);
+    for (const url of imageUrlsToLoad) {
+      let displayWidth = defaultSize;
+      let displayHeight = defaultSize;
+      const row = Math.floor(positionOffset / columnsPerRow);
+      const col = positionOffset % columnsPerRow;
+      const x = 200 + col * (displayWidth + 100);
+      const y = 200 + row * (displayHeight + 100);
 
-            addedUrls.add(imageUrl);
-            // 后台缓存到 IndexedDB（http URL 才需要，base64 已在内存中）
-            if (imageUrl.startsWith('http')) cacheMediaUrl(imageUrl).catch(() => {});
-            elements.push({
-              id: generateId(),
-              type: 'image',
-              x: x,
-              y: y,
-              width: displayWidth,
-              height: displayHeight,
-              href: imageUrl, // 保存原始 URL
-              mimeType: 'image/png',
-              image: img,
-              visible: true,
-              locked: false
-            });
+      if (url.startsWith('http')) cacheMediaUrl(url).catch(() => {});
+      elements.push({
+        id: generateId(),
+        type: 'image',
+        x, y,
+        width: displayWidth,
+        height: displayHeight,
+        href: url,
+        mimeType: 'image/png',
+        visible: true,
+        locked: false
+      });
+      positionOffset++;
+    }
 
-            positionOffset++;
-          } catch (error) {
-            console.error('加载图片失败:', imageUrl, error);
-          }
+    // ── 阶段三：串行加载视频（视频本身有超时，不会永久阻塞）──
+    for (const videoUrl of videoUrlsToLoad) {
+      try {
+        const video = document.createElement('video');
+        video.preload = 'auto';
+        video.muted = true;
+        video.playsInline = true;
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => resolve(), 5000);
+          video.onloadeddata = () => { video.currentTime = 0.1; };
+          video.onseeked = () => { clearTimeout(timer); resolve(); };
+          video.onerror = () => { clearTimeout(timer); resolve(); };
+          video.src = videoUrl;
+          video.load();
+        });
+        let displayWidth = video.videoWidth || 640;
+        let displayHeight = video.videoHeight || 360;
+        if (displayWidth > maxDisplaySize || displayHeight > maxDisplaySize) {
+          const scale = Math.min(maxDisplaySize / displayWidth, maxDisplaySize / displayHeight);
+          displayWidth = displayWidth * scale;
+          displayHeight = displayHeight * scale;
         }
-
-        // 加载所有找到的视频
-        for (const videoUrl of videoUrls) {
-          if (addedUrls.has(videoUrl)) continue;
-          try {
-            // 创建视频元素
-            const video = document.createElement('video');
-            video.preload = 'auto';
-            video.muted = true;
-            video.playsInline = true;
-
-            // 等待视频数据加载完成以获取尺寸和封面帧，加载失败时用默认尺寸
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(() => resolve(), 5000); // 5s 超时
-              video.onloadeddata = () => {
-                video.currentTime = 0.1; // 跳到第一帧
-              };
-              video.onseeked = () => { clearTimeout(timer); resolve(); };
-              video.onerror = () => { clearTimeout(timer); resolve(); }; // 失败也继续，用默认尺寸
-              video.src = videoUrl;
-              video.load();
-            });
-
-            // 限制视频显示尺寸
-            const maxDisplaySize = 800;
-            let displayWidth = video.videoWidth || 640;
-            let displayHeight = video.videoHeight || 360;
-            
-            if (displayWidth > maxDisplaySize || displayHeight > maxDisplaySize) {
-              const scale = Math.min(maxDisplaySize / displayWidth, maxDisplaySize / displayHeight);
-              displayWidth = displayWidth * scale;
-              displayHeight = displayHeight * scale;
-            }
-
-            // 计算视频位置，避免重叠
-            const columnsPerRow = 5;
-            const row = Math.floor(positionOffset / columnsPerRow);
-            const col = positionOffset % columnsPerRow;
-            const spacing = 100;
-            const x = 200 + col * (displayWidth + spacing);
-            const y = 200 + row * (displayHeight + spacing);
-
-            addedUrls.add(videoUrl);
-            elements.push({
-              id: generateId(),
-              type: 'video',
-              x: x,
-              y: y,
-              width: displayWidth,
-              height: displayHeight,
-              videoUrl: videoUrl,
-              href: videoUrl,
-              video: video,
-              isPlaying: false,
-              visible: true,
-              locked: false
-            } as VideoElement);
-
-            positionOffset++;
-          } catch (error) {
-            console.error('加载视频失败:', videoUrl, error);
-            // 即使视频加载失败，也创建一个占位元素
-            const columnsPerRow = 5;
-            const row = Math.floor(positionOffset / columnsPerRow);
-            const col = positionOffset % columnsPerRow;
-            const spacing = 100;
-            const displayWidth = 640;
-            const displayHeight = 360;
-            const x = 200 + col * (displayWidth + spacing);
-            const y = 200 + row * (displayHeight + spacing);
-
-            elements.push({
-              id: generateId(),
-              type: 'video',
-              x: x,
-              y: y,
-              width: displayWidth,
-              height: displayHeight,
-              videoUrl: videoUrl,
-              href: videoUrl,
-              visible: true,
-              locked: false
-            } as VideoElement);
-
-            addedUrls.add(videoUrl);
-            positionOffset++;
-          }
-        }
+        const columnsPerRow = 5;
+        const row = Math.floor(positionOffset / columnsPerRow);
+        const col = positionOffset % columnsPerRow;
+        const x = 200 + col * (displayWidth + 100);
+        const y = 200 + row * (displayHeight + 100);
+        elements.push({
+          id: generateId(),
+          type: 'video',
+          x, y,
+          width: displayWidth,
+          height: displayHeight,
+          videoUrl,
+          href: videoUrl,
+          video,
+          isPlaying: false,
+          visible: true,
+          locked: false
+        } as VideoElement);
+        positionOffset++;
+      } catch {
+        // 视频加载失败，跳过
+      }
     }
 
     return elements;
@@ -1068,6 +1002,71 @@ const ImageEditorPage: React.FC = () => {
       console.error('保存图片编辑器视频生成偏好缓存失败:', error);
     }
   }, [videoResolution, videoDuration, selectedVideoModel]);
+
+  // 画布上仅有 href、尚未解码的图片：异步加载并更新（同一 URL 只请求一次）
+  const hydratingImageIdsRef = useRef<Set<string>>(new Set());
+  const elementsHydrateKey = useMemo(
+    () => elements
+      .filter((e) => e.type === 'image' && (e as ImageElement).href && !(e as ImageElement).image)
+      .map((e) => `${e.id}:${(e as ImageElement).href}`)
+      .join('|'),
+    [elements]
+  );
+
+  useEffect(() => {
+    if (!elementsHydrateKey) return;
+
+    const pending = elements.filter(
+      (e): e is ImageElement =>
+        e.type === 'image' && !!(e as ImageElement).href && !(e as ImageElement).image
+    );
+
+    pending.forEach((el) => {
+      const href = el.href!;
+      if (hydratingImageIdsRef.current.has(el.id)) return;
+      hydratingImageIdsRef.current.add(el.id);
+
+      loadMediaImage(href).then((img) => {
+        hydratingImageIdsRef.current.delete(el.id);
+        if (!img) return;
+
+        const maxDisplaySize = 800;
+        let w = img.naturalWidth || img.width || el.width || 512;
+        let h = img.naturalHeight || img.height || el.height || 512;
+        if (w > maxDisplaySize || h > maxDisplaySize) {
+          const scale = Math.min(maxDisplaySize / w, maxDisplaySize / h);
+          w *= scale;
+          h *= scale;
+        }
+
+        setElements((prev) =>
+          prev.map((item) => {
+            if (item.id !== el.id || item.type !== 'image') return item;
+            const cur = item as ImageElement;
+            if (cur.image) return item;
+            return { ...cur, image: img, width: w, height: h };
+          })
+        );
+        setBoards((prev) => {
+          const updated = prev.map((b) =>
+            b.id !== currentBoardId
+              ? b
+              : {
+                  ...b,
+                  elements: b.elements.map((item) => {
+                    if (item.id !== el.id || item.type !== 'image') return item;
+                    const cur = item as ImageElement;
+                    if (cur.image) return item;
+                    return { ...cur, image: img, width: w, height: h };
+                  })
+                }
+          );
+          saveBoardsToCache(updated);
+          return updated;
+        });
+      });
+    });
+  }, [elementsHydrateKey, elements, currentBoardId, saveBoardsToCache]);
 
   // 构建所有可用的媒体元素列表（从 session messages + 画布元素），供 @功能 和粘贴解析共用
   const buildAllMediaElements = useCallback((): Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> => {
@@ -2014,20 +2013,17 @@ const ImageEditorPage: React.FC = () => {
     const restoreBoardElements = async (board: Board): Promise<Board> => {
       const restoredElements = await Promise.all(board.elements.map(async (el) => {
         if (el.type === 'image' && el.href && !el.image) {
-          // 优先使用 IndexedDB 缓存的 base64，没有则用原始 URL
-          const src = await getCachedMediaUrl(el.href);
-          return new Promise<Element>((resolve) => {
-            const img = new Image();
-            img.onload = () => resolve({ ...el, href: src, image: img });
-            img.onerror = () => {
-              // 缓存失败时降级用原始 URL
-              const fallback = new Image();
-              fallback.onload = () => resolve({ ...el, image: fallback });
-              fallback.onerror = () => resolve(el);
-              fallback.src = el.href || '';
-            };
-            img.src = src;
-          });
+          const img = await loadMediaImage(el.href);
+          if (!img) return el;
+          const maxDisplaySize = 800;
+          let displayWidth = img.naturalWidth || img.width || el.width || 512;
+          let displayHeight = img.naturalHeight || img.height || el.height || 512;
+          if (displayWidth > maxDisplaySize || displayHeight > maxDisplaySize) {
+            const scale = Math.min(maxDisplaySize / displayWidth, maxDisplaySize / displayHeight);
+            displayWidth *= scale;
+            displayHeight *= scale;
+          }
+          return { ...el, image: img, width: displayWidth, height: displayHeight };
         }
         if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
           const videoEl = el as VideoElement;
@@ -2265,21 +2261,15 @@ const ImageEditorPage: React.FC = () => {
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
 
-  // 恢复图片元素的image对象
+  // 恢复图片元素的 image 对象（走统一加载器，避免重复请求）
   const restoreImageElements = useCallback(async (elements: Element[]): Promise<Element[]> => {
-    const restored = await Promise.all(elements.map(async (el) => {
+    return Promise.all(elements.map(async (el) => {
       if (el.type === 'image' && el.href && !el.image) {
-        return new Promise<Element>((resolve) => {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => resolve({ ...el, image: img });
-          img.onerror = () => resolve(el);
-          img.src = el.href || '';
-        });
+        const img = await loadMediaImage(el.href);
+        return img ? { ...el, image: img } : el;
       }
       return el;
     }));
-    return restored;
   }, []);
 
   const undo = useCallback(async () => {
@@ -3217,24 +3207,11 @@ const ImageEditorPage: React.FC = () => {
           }
         };
 
-        // 如果是外部URL，使用 crossOrigin 尝试加载
-        if (!imageSrc.startsWith('data:')) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous'; // 尝试请求 CORS，以便后续可以导出 canvas
-          img.onload = () => {
-            createImageElement(img, imageSrc!);
-          };
-          img.onerror = handleImageLoadError;
-          img.src = imageSrc;
+        const img = await loadMediaImage(imageSrc);
+        if (!img) {
+          handleImageLoadError();
         } else {
-          // base64图片直接加载
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            createImageElement(img, imageSrc!);
-          };
-          img.onerror = handleImageLoadError;
-          img.src = imageSrc;
+          createImageElement(img, imageSrc);
         }
       } else {
         // 检查是否是余额不足错误
@@ -3421,24 +3398,11 @@ const ImageEditorPage: React.FC = () => {
           }
         };
 
-        // 如果是外部URL，使用 crossOrigin 尝试加载
-        if (!imageSrc.startsWith('data:')) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous'; // 尝试请求 CORS，以便后续可以导出 canvas
-          img.onload = () => {
-            createImageElement(img, imageSrc!);
-          };
-          img.onerror = handleImageLoadError;
-          img.src = imageSrc;
+        const img = await loadMediaImage(imageSrc);
+        if (!img) {
+          handleImageLoadError();
         } else {
-          // base64图片直接加载
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => {
-            createImageElement(img, imageSrc!);
-          };
-          img.onerror = handleImageLoadError;
-          img.src = imageSrc;
+          createImageElement(img, imageSrc);
         }
       } else {
         // 检查是否是余额不足错误
@@ -4105,9 +4069,7 @@ const ImageEditorPage: React.FC = () => {
 
       switch (element.type) {
         case 'image': {
-          // 使用已加载的图片对象直接绘制
           if (element.image) {
-            // 如果有圆角，使用clip裁剪
             const borderRadius = (element as any).borderRadius || 0;
             if (borderRadius > 0) {
               ctx.beginPath();
@@ -4115,6 +4077,14 @@ const ImageEditorPage: React.FC = () => {
               ctx.clip();
             }
             ctx.drawImage(element.image, element.x, element.y, element.width, element.height);
+          } else if ((element as ImageElement).href) {
+            ctx.fillStyle = '#1f2937';
+            ctx.fillRect(element.x, element.y, element.width, element.height);
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('加载中…', element.x + element.width / 2, element.y + element.height / 2);
+            ctx.textAlign = 'left';
           }
           break;
         }

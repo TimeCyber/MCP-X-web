@@ -566,7 +566,14 @@ export const formatCodeGenType = (type: string): string => {
       return 'Vue 应用';
     case 'STATIC':
       return '静态网站';
+    case 'PPT':
+      return 'PPT 演示文稿';
     default:
       return type || '未知类型';
   }
+};
+
+/** 判断是否为 PPT 类型应用 */
+export const isPptType = (codeGenType?: string): boolean => {
+  return codeGenType?.toUpperCase() === 'PPT';
 };

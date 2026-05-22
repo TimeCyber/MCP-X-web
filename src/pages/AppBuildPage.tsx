@@ -14,6 +14,7 @@ import {
   downloadAppCode,
   getStaticPreviewUrl,
   formatCodeGenType,
+  isPptType,
   type AppInfo,
   type ChatMessage as ChatMessageType
 } from '../services/appBuildApi';
@@ -903,6 +904,8 @@ export const AppBuildPage: React.FC = () => {
                 <Download size={16} />
                 {downloading ? '下载中...' : '下载代码'}
               </button> */}
+              {/* 仅 PPT 类型应用显示导出按钮 */}
+              {isPptType(appInfo?.codeGenType) && (
               <button
                 onClick={handleExportPptx}
                 disabled={exporting || !hasDeployablePreview}
@@ -912,6 +915,7 @@ export const AppBuildPage: React.FC = () => {
                 <FileDown size={16} />
                 {exporting ? '导出中...' : '导出PPT'}
               </button>
+              )}
               <button
                 onClick={handleDeploy}
                 disabled={deploying}
