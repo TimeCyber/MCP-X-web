@@ -26,7 +26,7 @@
 
 <div align="center">
 
-🎉 **重磅上线**：**GPT Image 2** 与 **Stable Diffusion 2.0** 现已全面上线 MCP-X！国际顶级生图模型，一站体验。
+🎉 **重磅上线**：**GPT Image 2** 与 **Seedance 2.0** 现已全面上线 MCP-X！国际顶级生图模型，一站体验。
 
 💰 **新用户专属**：注册即送 **100 元**代金券，GPT Image 2 / SD 2.0 / 即梦 / 可灵 随便玩，国外生图模型玩到 high！
 
