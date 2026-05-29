@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BrainCircuit, Wand2, ChevronRight, AlertCircle, Users, MapPin, List, TextQuote, Clock, BookOpen, ArrowLeft, Aperture, Plus, Trash2, Layout, Film } from 'lucide-react';
 import type { VideoGenProject, Shot, Scene, Character } from '../../types/videogen';
+import { inferVideoType, resolveVideoType } from '../../types/videogen';
 import { parseScriptToData, generateShotList } from '../../services/videogenService';
 import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
+import {
+  LAST_USED_TEXT_MODEL_KEY,
+  getInitialTextModel,
+  resolvePreferredModel,
+  persistTextModel,
+} from './videoGenModelPrefs';
 
 interface Props {
   project: VideoGenProject;
@@ -30,7 +37,8 @@ const LANGUAGE_OPTIONS = [
 const VIDEO_TYPE_OPTIONS = [
   { label: '剧本创作', value: 'script', description: '基于剧本内容生成专业分镜' },
   { label: '宣传片制作', value: 'promotional', description: '商业宣传片风格的分镜设计' },
-  { label: '短视频制作', value: 'shortvideo', description: '社交媒体短视频风格的分镜' }
+  { label: '短视频制作', value: 'shortvideo', description: '社交媒体短视频风格的分镜' },
+  { label: '故事板制作', value: 'storyboard', description: '故事板导演：分析剧本并生成 15 秒故事板分镜' },
 ];
 
 const CAMERA_MOVEMENTS = [
@@ -61,8 +69,8 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
   const [localTitle, setLocalTitle] = useState(project.title);
   const [localDuration, setLocalDuration] = useState(project.targetDuration || '60s');
   const [localLanguage, setLocalLanguage] = useState(project.language || '中文');
-  const [localVideoType, setLocalVideoType] = useState<'script' | 'promotional' | 'shortvideo'>(project.videoType || 'script');
-  const [localTextModel, setLocalTextModel] = useState(project.textModel || '');
+  const [localVideoType, setLocalVideoType] = useState<'script' | 'promotional' | 'shortvideo' | 'storyboard'>(project.videoType || 'script');
+  const [localTextModel, setLocalTextModel] = useState(getInitialTextModel(project.textModel));
   const [customDurationInput, setCustomDurationInput] = useState('');
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -84,7 +92,20 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
   const [loadingModels, setLoadingModels] = useState(false);
 
   // 根据视频类型生成示例剧本
-  const getDefaultScriptForVideoType = (videoType: 'script' | 'promotional' | 'shortvideo'): string => {
+  const getDefaultScriptForVideoType = (videoType: 'script' | 'promotional' | 'shortvideo' | 'storyboard'): string => {
+    if (videoType === 'storyboard') {
+      return `标题：雨夜对峙（故事板片段）
+
+场景 1
+内景。狭窄走廊- 夜
+冷白顶光，侦探与神秘人对峙
+
+侦探
+我知道是你。
+
+神秘人
+你什么都不知道。`;
+    }
     if (videoType === 'promotional') {
       return `标题：高端护肤品宣传片
 
@@ -175,7 +196,6 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
       try {
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
-          // 只显示 category 为 "chat" 或 "deepseek" 的模型
           const chatModels = sortModelsByOrderBy(
             response.data.filter((m: ModelInfo) =>
               m.category === 'chat' || m.category === 'deepseek'
@@ -183,9 +203,12 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
           );
           setModels(chatModels);
 
-          // 如果项目没有设置模型，使用默认模型
-          if (!project.textModel && chatModels.length > 0) {
-            setLocalTextModel(chatModels[0].modelName);
+          const selected = resolvePreferredModel(project.textModel, LAST_USED_TEXT_MODEL_KEY, chatModels);
+          if (selected) {
+            setLocalTextModel(selected);
+            if (selected !== project.textModel) {
+              updateProject({ textModel: selected });
+            }
           }
         }
       } catch (error) {
@@ -196,24 +219,35 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
     };
 
     loadModels();
-  }, [project.textModel]);
+  }, []);
+
+  // 记住用户选择的文本模型
+  useEffect(() => {
+    if (localTextModel && localTextModel !== project.textModel) {
+      updateProject({ textModel: localTextModel });
+    }
+    if (localTextModel) {
+      persistTextModel(localTextModel);
+    }
+  }, [localTextModel]);
 
   useEffect(() => {
     setLocalScript(project.rawScript);
     setLocalTitle(project.title);
     setLocalDuration(project.targetDuration || '60s');
     setLocalLanguage(project.language || '中文');
-    setLocalVideoType(project.videoType || 'script');
-    setLocalTextModel(project.textModel || '');
+    setLocalVideoType(resolveVideoType(project));
+    setLocalTextModel(getInitialTextModel(project.textModel));
 
-    // 如果项目还没有设置 videoType，设置为默认值
-    if (!project.videoType) {
-      updateProject({ videoType: 'script' });
+    // 旧项目未持久化 videoType 时，根据分镜特征推断并补写，避免被误判为普通模式
+    const inferred = inferVideoType(project);
+    if (!project.videoType && inferred) {
+      updateProject({ videoType: inferred });
     }
   }, [project.id]);
 
   // 处理视频类型切换时的脚本更新
-  const handleVideoTypeChange = (newVideoType: 'script' | 'promotional' | 'shortvideo') => {
+  const handleVideoTypeChange = (newVideoType: 'script' | 'promotional' | 'shortvideo' | 'storyboard') => {
     setLocalVideoType(newVideoType);
     updateProject({ videoType: newVideoType });
 
@@ -223,7 +257,8 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
       localScript.trim() === '' ||
       localScript === getDefaultScriptForVideoType('script') ||
       localScript === getDefaultScriptForVideoType('promotional') ||
-      localScript === getDefaultScriptForVideoType('shortvideo');
+      localScript === getDefaultScriptForVideoType('shortvideo') ||
+      localScript === getDefaultScriptForVideoType('storyboard');
 
     if (isUsingDefaultScript) {
       setLocalScript(getDefaultScriptForVideoType(newVideoType));
@@ -276,13 +311,13 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
       });
 
       const scriptData = await parseScriptToData(
-        localScript, 
-        localLanguage, 
+        localScript,
+        localLanguage,
         localTextModel,
         (fullText) => {
-          // 实时更新分析中的文本流
           setStreamingAnalysisText(fullText);
-        }
+        },
+        localVideoType
       );
 
       scriptData.targetDuration = finalDuration;
@@ -526,7 +561,7 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
               {VIDEO_TYPE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => handleVideoTypeChange(opt.value as 'script' | 'promotional' | 'shortvideo')}
+                  onClick={() => handleVideoTypeChange(opt.value as 'script' | 'promotional' | 'shortvideo' | 'storyboard')}
                   className={`w-full text-left px-3 py-2.5 text-sm rounded-md transition-all border ${localVideoType === opt.value
                     ? 'bg-zinc-100 text-black border-zinc-100 shadow-sm'
                     : 'bg-transparent border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
@@ -548,10 +583,7 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
             <div className="relative">
               <select
                 value={localTextModel}
-                onChange={(e) => {
-                  setLocalTextModel(e.target.value);
-                  updateProject({ textModel: e.target.value });
-                }}
+                onChange={(e) => setLocalTextModel(e.target.value)}
                 disabled={loadingModels}
                 className="w-full bg-[#141414] border border-zinc-800 text-white px-3 py-2.5 text-sm rounded-md appearance-none focus:border-zinc-600 focus:outline-none transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -560,9 +592,7 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
                 ) : models.length === 0 ? (
                   <option value="">暂无可用模型</option>
                 ) : (
-                  <>
-                    <option value="">选择模型</option>
-                    {models.map((model) => {
+                  models.map((model) => {
                       // 组合显示：modelDescribe - remark
                       const describe = model.modelDescribe || model.modelName;
                       const remark = model.remark ? ` - ${model.remark}` : '';
@@ -571,8 +601,7 @@ const StageScript: React.FC<Props> = ({ project, updateProject }) => {
                           {describe}{remark}
                         </option>
                       );
-                    })}
-                  </>
+                    })
                 )}
               </select>
               <div className="absolute right-3 top-3 pointer-events-none">

@@ -83,7 +83,8 @@ export interface VideoGenProject {
   rawScript: string;
   targetDuration: string;
   language: string;
-  videoType?: 'script' | 'promotional' | 'shortvideo'; // 视频类型：剧本创作、宣传片、短视频
+  videoType?: 'script' | 'promotional' | 'shortvideo' | 'storyboard'; // 视频类型：剧本创作、宣传片、短视频、故事板Agent
+  storyboardAnalysis?: string; // 故事板 Agent 分析结果（Seedance 提示词全文）
   textModel?: string; // 文字大模型选择
   imageModel?: string; // 图像生成模型选择
   imageStyle?: string; // 图像风格选择
@@ -102,6 +103,25 @@ export interface VideoGenProject {
   
   // 关联的会话ID（用于后端存储）
   sessionId?: string;
+}
+
+/** 从项目已有数据推断视频类型（兼容旧项目未持久化 videoType 的情况） */
+export function inferVideoType(project: Partial<VideoGenProject>): VideoGenProject['videoType'] | undefined {
+  if (project.videoType) return project.videoType;
+  if (project.storyboardAnalysis) return 'storyboard';
+  const shots = project.shots;
+  if (shots && shots.length > 0) {
+    const hasStoryboardMarkers = shots.some(s =>
+      /\[\d+(?:\.\d+)?s\s*-\s*\d+(?:\.\d+)?s\]/i.test(s.actionSummary || '')
+    );
+    if (hasStoryboardMarkers) return 'storyboard';
+  }
+  return undefined;
+}
+
+/** 解析最终视频类型，无推断结果时默认 script */
+export function resolveVideoType(project: Partial<VideoGenProject>): NonNullable<VideoGenProject['videoType']> {
+  return inferVideoType(project) || 'script';
 }
 
 // 导出阶段类型

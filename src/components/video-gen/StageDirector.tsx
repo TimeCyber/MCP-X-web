@@ -1,9 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, Video, Image as ImageIcon, LayoutGrid, Sparkles, AlertCircle, MapPin, Clock, ChevronLeft, ChevronRight, MessageSquare, X, Film, Aperture, Maximize2, Trash2, Upload, Database, FolderOpen, Check, Edit2, Volume2, Plus, UserPlus, UserMinus, RefreshCw } from 'lucide-react';
+import { Loader2, Video, Image as ImageIcon, LayoutGrid, Sparkles, AlertCircle, MapPin, Clock, ChevronLeft, ChevronRight, MessageSquare, X, Film, Aperture, Maximize2, Trash2, Upload, Database, FolderOpen, Check, Edit2, Volume2, Plus, UserPlus, UserMinus, RefreshCw, Clapperboard } from 'lucide-react';
 import type { VideoGenProject, Shot, Keyframe } from '../../types/videogen';
+import { resolveVideoType } from '../../types/videogen';
 import { generateImage, generateVideo, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, uploadFileToOss } from '../../services/videogenService';
+import { wrapStoryboardImagePrompt, buildStoryboardRefContextFromShot, buildStoryboardVideoReferenceMaterials } from '../../services/storyboardAgentService';
 import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 import { chatApi } from '../../services/chatApi';
+import {
+  LAST_USED_VIDEO_MODEL_KEY,
+  getInitialImageModel,
+  getInitialVideoModel,
+  resolvePreferredModel,
+  resolvePreferredImageModel,
+  persistImageModel,
+  persistVideoModel,
+} from './videoGenModelPrefs';
 
 interface Props {
   project: VideoGenProject;
@@ -13,7 +24,69 @@ interface Props {
 
 const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject = false }) => {
   const [activeShotId, setActiveShotId] = useState<string | null>(null);
-  const [processingState, setProcessingState] = useState<{id: string, type: 'kf_start'|'kf_end'|'video'}|null>(null);
+  const keyframeTaskKey = (shotId: string, type: 'start' | 'end') => `${shotId}:${type}`;
+  const processingKeyframeTasksRef = useRef<Record<string, true>>({});
+  const processingVideoTasksRef = useRef<Record<string, true>>({});
+  const [processingKeyframeTasks, setProcessingKeyframeTasks] = useState<Record<string, true>>({});
+  const [processingVideoTasks, setProcessingVideoTasks] = useState<Record<string, true>>({});
+  const [videoProgressByShot, setVideoProgressByShot] = useState<Record<string, { message: string; current?: number; total?: number }>>({});
+
+  const syncKeyframeTasksState = useCallback(() => {
+    setProcessingKeyframeTasks({ ...processingKeyframeTasksRef.current });
+  }, []);
+
+  const syncVideoTasksState = useCallback(() => {
+    setProcessingVideoTasks({ ...processingVideoTasksRef.current });
+  }, []);
+
+  const acquireKeyframeTask = useCallback((shotId: string, type: 'start' | 'end'): boolean => {
+    const taskKey = keyframeTaskKey(shotId, type);
+    if (processingKeyframeTasksRef.current[taskKey]) return false;
+    processingKeyframeTasksRef.current = { ...processingKeyframeTasksRef.current, [taskKey]: true };
+    syncKeyframeTasksState();
+    return true;
+  }, [syncKeyframeTasksState]);
+
+  const releaseKeyframeTask = useCallback((shotId: string, type: 'start' | 'end') => {
+    const taskKey = keyframeTaskKey(shotId, type);
+    if (!processingKeyframeTasksRef.current[taskKey]) return;
+    const next = { ...processingKeyframeTasksRef.current };
+    delete next[taskKey];
+    processingKeyframeTasksRef.current = next;
+    syncKeyframeTasksState();
+  }, [syncKeyframeTasksState]);
+
+  const acquireVideoTask = useCallback((shotId: string): boolean => {
+    if (processingVideoTasksRef.current[shotId]) return false;
+    processingVideoTasksRef.current = { ...processingVideoTasksRef.current, [shotId]: true };
+    syncVideoTasksState();
+    return true;
+  }, [syncVideoTasksState]);
+
+  const releaseVideoTask = useCallback((shotId: string) => {
+    if (processingVideoTasksRef.current[shotId]) {
+      const next = { ...processingVideoTasksRef.current };
+      delete next[shotId];
+      processingVideoTasksRef.current = next;
+      syncVideoTasksState();
+    }
+    setVideoProgressByShot(prev => {
+      if (!prev[shotId]) return prev;
+      const progressNext = { ...prev };
+      delete progressNext[shotId];
+      return progressNext;
+    });
+  }, [syncVideoTasksState]);
+
+  const isKeyframeProcessing = useCallback(
+    (shotId: string, type: 'start' | 'end') => !!processingKeyframeTasks[keyframeTaskKey(shotId, type)],
+    [processingKeyframeTasks]
+  );
+
+  const isVideoProcessing = useCallback(
+    (shotId: string) => !!processingVideoTasks[shotId],
+    [processingVideoTasks]
+  );
   const batchProgress = project.batchProgress || null;
   const setBatchProgress = (progress: {current: number, total: number, message: string} | null) => {
     updateProject({ batchProgress: progress });
@@ -30,7 +103,6 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       stopBatchRef.current = false;
     }
   }, [project.batchProgress]);
-  const [videoProgress, setVideoProgress] = useState<{message: string, current?: number, total?: number} | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null); // 图片预览
   
   // 图片编辑器状态
@@ -119,12 +191,12 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
   // 视频模型选择
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [localVideoModel, setLocalVideoModel] = useState(project.videoModel || '');
+  const [localVideoModel, setLocalVideoModel] = useState(getInitialVideoModel(project.videoModel));
   
   // 图片模型选择
   const [imageModels, setImageModels] = useState<ModelInfo[]>([]);
   const [loadingImageModels, setLoadingImageModels] = useState(false);
-  const [localImageModel, setLocalImageModel] = useState(project.imageModel || '');
+  const [localImageModel, setLocalImageModel] = useState(getInitialImageModel(project.imageModel));
   
   // 视频分辨率选择
   const [localVideoResolution, setLocalVideoResolution] = useState<'480P' | '720P' | '1080P'>(project.videoResolution || '720P');
@@ -242,6 +314,63 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
     projectRef.current = project;
   }, [project]);
 
+  const isStoryboardMode = resolveVideoType(project) === 'storyboard';
+
+  useEffect(() => {
+    if (isStoryboardMode) {
+      setDefaultDuration(15);
+    }
+  }, [isStoryboardMode]);
+
+  const buildNarrativeFromShot = useCallback((shot: Shot) => {
+    const parts = [shot.actionSummary?.trim()].filter(Boolean);
+    if (shot.dialogue?.trim()) parts.push(`对白: "${shot.dialogue.trim()}"`);
+    if (shot.narration?.trim()) parts.push(`旁白: "${shot.narration.trim()}"`);
+    return parts.join('\n');
+  }, []);
+
+  const parseNarrativeFromText = useCallback((text: string) => {
+    const lines = text.split('\n');
+    let dialogue: string | undefined;
+    let narration: string | undefined;
+    const actionLines: string[] = [];
+    for (const line of lines) {
+      const dialogueMatch = line.match(/^对白[:：]\s*"(.+)"\s*$/);
+      const narrationMatch = line.match(/^旁白[:：]\s*"(.+)"\s*$/);
+      if (dialogueMatch) {
+        dialogue = dialogueMatch[1];
+      } else if (narrationMatch) {
+        narration = narrationMatch[1];
+      } else {
+        actionLines.push(line);
+      }
+    }
+    return {
+      actionSummary: actionLines.join('\n').trim(),
+      dialogue,
+      narration,
+    };
+  }, []);
+
+  const handleStoryboardNarrativeChange = (shotId: string, text: string) => {
+    const { actionSummary, dialogue, narration } = parseNarrativeFromText(text);
+    updateShot(shotId, (s) => ({
+      ...s,
+      actionSummary,
+      dialogue,
+      narration,
+    }));
+  };
+
+  const resolveStoryboardImagePrompt = useCallback((shot: Shot, type: 'start' | 'end') => {
+    if (!isStoryboardMode) {
+      const kf = shot.keyframes?.find(k => k.type === type);
+      return kf?.visualPrompt || shot.actionSummary;
+    }
+    // 故事板模式：下方生图提示词默认与上方分镜脚本一致（actionSummary + 对白/旁白）
+    return buildNarrativeFromShot(shot);
+  }, [isStoryboardMode, buildNarrativeFromShot]);
+
   // 当切换镜头时，取消所有编辑状态
   useEffect(() => {
     setEditingAction(false);
@@ -271,6 +400,14 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
   // Check if all start frames are generated
   const allStartFramesGenerated = project.shots.length > 0 && project.shots.every(s => s.keyframes?.find(k => k.type === 'start')?.imageUrl);
 
+  // 切换项目时恢复已保存的模型选择
+  useEffect(() => {
+    const savedImage = getInitialImageModel(project.imageModel);
+    const savedVideo = getInitialVideoModel(project.videoModel);
+    if (savedImage) setLocalImageModel(savedImage);
+    if (savedVideo) setLocalVideoModel(savedVideo);
+  }, [project.id]);
+
   // 加载视频模型列表
   useEffect(() => {
     const loadVideoModels = async () => {
@@ -284,11 +421,12 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
           );
           setVideoModels(vidModels);
           
-          // 如果项目没有设置模型，使用默认模型
-          if (!project.videoModel && vidModels.length > 0) {
-            const defaultModel = vidModels[0].modelName;
-            setLocalVideoModel(defaultModel);
-            updateProject({ videoModel: defaultModel });
+          const selectedVideo = resolvePreferredModel(project.videoModel, LAST_USED_VIDEO_MODEL_KEY, vidModels);
+          if (selectedVideo) {
+            setLocalVideoModel(selectedVideo);
+            if (selectedVideo !== project.videoModel) {
+              updateProject({ videoModel: selectedVideo });
+            }
           }
         }
       } catch (error) {
@@ -314,11 +452,12 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
           );
           setImageModels(imgModels);
           
-          // 如果项目没有设置模型，使用默认模型
-          if (!project.imageModel && imgModels.length > 0) {
-            const defaultModel = imgModels[0].modelName;
-            setLocalImageModel(defaultModel);
-            updateProject({ imageModel: defaultModel });
+          const selectedImage = resolvePreferredImageModel(project.imageModel, imgModels);
+          if (selectedImage) {
+            setLocalImageModel(selectedImage);
+            if (selectedImage !== project.imageModel) {
+              updateProject({ imageModel: selectedImage });
+            }
           }
         }
       } catch (error) {
@@ -331,17 +470,23 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
     loadImageModels();
   }, []);
 
-  // 当本地模型选择改变时，更新项目
+  // 当本地模型选择改变时，更新项目并记住用户选择
   useEffect(() => {
     if (localVideoModel && localVideoModel !== project.videoModel) {
       updateProject({ videoModel: localVideoModel });
     }
+    if (localVideoModel) {
+      persistVideoModel(localVideoModel);
+    }
   }, [localVideoModel]);
 
-  // 当本地图片模型选择改变时，更新项目
+  // 当本地图片模型选择改变时，更新项目并记住用户选择
   useEffect(() => {
     if (localImageModel && localImageModel !== project.imageModel) {
       updateProject({ imageModel: localImageModel });
+    }
+    if (localImageModel) {
+      persistImageModel(localImageModel);
     }
   }, [localImageModel]);
 
@@ -391,9 +536,11 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
 
   const handleAddShot = (afterIndex?: number) => {
     const newShot: Shot = {
-      id: `shot-${Date.now()}`,
+      id: `shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       sceneId: project.shots[afterIndex ?? project.shots.length - 1]?.sceneId || project.scriptData?.scenes[0]?.id || '1',
-      actionSummary: '新镜头描述...',
+      actionSummary: isStoryboardMode
+        ? '[0.0s-5.0s] \n[5.0s-10.0s] \n[10.0s-15.0s] '
+        : '新镜头描述...',
       cameraMovement: 'static',
       characters: [],
       keyframes: [],
@@ -419,68 +566,79 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       const allShots = shotsOverride || currentProject.shots;
 
       if (currentProject.scriptData) {
-        // 查找该场景下的所有镜头，确定当前是第几个
         const shotsInScene = allShots.filter(s => String(s.sceneId) === String(shot.sceneId));
         const isFirstShotOfScene = shotsInScene.length > 0 && shotsInScene[0].id === shot.id;
+        const scene = currentProject.scriptData.scenes.find(s => String(s.id) === String(shot.sceneId));
+        const sceneGeneratedKeyframeUrls = new Set(
+          shotsInScene.flatMap(s =>
+            (s.keyframes || [])
+              .map(k => k.imageUrl)
+              .filter((url): url is string => !!url)
+          )
+        );
+        const isSceneGeneratedShotUrl = (url?: string) =>
+          !!url && isStoryboardMode && sceneGeneratedKeyframeUrls.has(url);
 
         // 1. Scene Reference (Environment / Atmosphere)
-        if (isFirstShotOfScene) {
-          // 如果是该场景的第一个镜头，使用基础场景参考图
-          const scene = currentProject.scriptData.scenes.find(s => String(s.id) === String(shot.sceneId));
+        if (isStoryboardMode) {
+          // 故事板模式：仅使用资产库场景参考图，不传该场景任意已生成镜头图（含首镜故事板）
+          if (scene?.referenceImage && !isSceneGeneratedShotUrl(scene.referenceImage)) {
+            referenceImages.push(scene.referenceImage);
+            console.log('故事板-添加场景参考图:', scene.location, scene.referenceImage.substring(0, 50));
+          }
+        } else if (isFirstShotOfScene) {
           if (scene?.referenceImage) {
             referenceImages.push(scene.referenceImage);
             console.log('添加场景参考图 (首镜头):', scene.location, scene.referenceImage.substring(0, 50));
           }
         } else {
-          // 如果不是第一个镜头，使用该场景下第一个镜头的起始帧图作为“场景参考”
           const firstShotOfScene = shotsInScene[0];
           const firstShotStartKf = firstShotOfScene.keyframes?.find(k => k.type === 'start');
           if (firstShotStartKf?.imageUrl) {
             referenceImages.push(firstShotStartKf.imageUrl);
             console.log('使用场景首镜头起始帧代替场景图:', firstShotOfScene.id, firstShotStartKf.imageUrl.substring(0, 50));
-          } else {
-            // 如果首镜头还没生成图，还是用基础场景图兜底
-            const scene = currentProject.scriptData.scenes.find(s => String(s.id) === String(shot.sceneId));
-            if (scene?.referenceImage) {
-              referenceImages.push(scene.referenceImage);
-            }
+          } else if (scene?.referenceImage) {
+            referenceImages.push(scene.referenceImage);
           }
         }
 
         // 2. Character References (Appearance)
-        // 即使有了场景首帧参考，依然传入特定的角色定妆照以增强面部一致性
-        if (shot.characters && shot.characters.length > 0) {
-          console.log('镜头包含角色:', shot.characters);
-          shot.characters.forEach(charId => {
+        const charIds = shot.characters && shot.characters.length > 0
+          ? shot.characters
+          : isStoryboardMode
+            ? (currentProject.scriptData.characters || []).map(c => c.id)
+            : [];
+
+        if (charIds.length > 0) {
+          console.log('镜头包含角色:', charIds);
+          charIds.forEach(charId => {
             const char = currentProject.scriptData?.characters.find(c => String(c.id) === String(charId));
             if (!char) {
               console.log('未找到角色:', charId);
               return;
             }
 
-            // Check if a specific image type (base or threeview) is selected for this shot
             const imageType = shot.characterImageTypes?.[charId] || 'base';
             
-            // If threeview is selected and available, use it
             if (imageType === 'threeview' && char.threeViewImage) {
-                referenceImages.push(char.threeViewImage);
-                console.log('添加角色三视图参考图:', char.name, char.threeViewImage.substring(0, 50));
+                if (!isSceneGeneratedShotUrl(char.threeViewImage)) {
+                  referenceImages.push(char.threeViewImage);
+                  console.log('添加角色三视图参考图:', char.name, char.threeViewImage.substring(0, 50));
+                }
                 return;
             }
 
-            // Check if a specific variation is selected for this shot
             const varId = shot.characterVariations?.[charId];
             if (varId) {
                 const variation = char.variations?.find(v => v.id === varId);
-                if (variation?.referenceImage) {
+                if (variation?.referenceImage && !isSceneGeneratedShotUrl(variation.referenceImage)) {
                     referenceImages.push(variation.referenceImage);
                     console.log('添加角色变体参考图:', char.name, variation.name, variation.referenceImage.substring(0, 50));
-                    return; // Use variation image instead of base
+                    return;
                 }
             }
 
-            // Fallback to base image
-            if (char.referenceImage) {
+            if (char.referenceImage && !isSceneGeneratedShotUrl(char.referenceImage)) {
               referenceImages.push(char.referenceImage);
               console.log('添加角色基础参考图:', char.name, char.referenceImage.substring(0, 50));
             }
@@ -493,14 +651,29 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       return referenceImages;
   };
 
-  const handleGenerateKeyframe = async (shot: Shot, type: 'start' | 'end') => {
+  const handleGenerateKeyframe = async (shot: Shot, type: 'start' | 'end', promptOverride?: string) => {
+    if (!acquireKeyframeTask(shot.id, type)) return;
+
     // Robustly handle missing keyframe object
     const existingKf = shot.keyframes?.find(k => k.type === type);
     const kfId = existingKf?.id || `kf-${shot.id}-${type}-${Date.now()}`;
-    let prompt = existingKf?.visualPrompt || shot.actionSummary;
+
+    const narrativeContent = promptOverride?.trim()
+      || (isStoryboardMode && type === 'start'
+        ? buildNarrativeFromShot(shot)
+        : resolveStoryboardImagePrompt(shot, type));
+
+    const referenceImages = getRefImagesForShot(shot);
+    const storyboardRefContext = isStoryboardMode && type === 'start'
+      ? buildStoryboardRefContextFromShot(shot, project.scriptData, referenceImages.length)
+      : undefined;
+
+    let prompt = isStoryboardMode && type === 'start'
+      ? wrapStoryboardImagePrompt(narrativeContent, storyboardRefContext)
+      : narrativeContent;
     
     // 如果是场景的第一个镜头且是起始帧，且没有自定义提示词，则强化提示词要求：全景/中景，包含所有角色
-    if (type === 'start' && !existingKf?.visualPrompt) {
+    if (!isStoryboardMode && type === 'start' && !existingKf?.visualPrompt) {
         const shotsInScene = project.shots.filter(s => String(s.sceneId) === String(shot.sceneId));
         if (shotsInScene.length > 0 && shotsInScene[0].id === shot.id) {
             const allCharNames = shot.characters.map(id => {
@@ -511,20 +684,18 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
             console.log('强化首镜头提示词:', prompt);
         }
     }
-
-    setProcessingState({ id: kfId, type: type === 'start' ? 'kf_start' : 'kf_end' });
     
     try {
-      const referenceImages = getRefImagesForShot(shot);
       // 关键帧使用 2560x1440 尺寸
       const keyframeSize = { width: 2560, height: 1440 };
       const url = await generateImage(
         prompt, 
         referenceImages, 
-        project.imageModel || undefined, 
+        localImageModel || project.imageModel || undefined, 
         project.sessionId, 
         keyframeSize,
-        project.imageStyle
+        project.imageStyle,
+        isStoryboardMode && type === 'start' ? 'storyboard' : 'default'
       );
 
       // 自动加入本地资源库
@@ -536,7 +707,7 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
           type: 'scene',
           name: `镜头 ${shotIndex + 1} ${type === 'start' ? '起始帧' : '结束帧'}`,
           imageUrl: url,
-          visualPrompt: prompt,
+          visualPrompt: isStoryboardMode && type === 'start' ? narrativeContent : prompt,
           metadata: {
             shotNumber: shotIndex + 1,
             atmosphere: scene?.atmosphere || undefined
@@ -557,7 +728,9 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
            const idx = newKeyframes.findIndex((k: Keyframe) => k.type === type);
            
            // 保持最新的提示词，不要用生成开始前的旧提示词覆盖
-           const currentVisualPrompt = idx >= 0 ? newKeyframes[idx].visualPrompt : prompt;
+           const currentVisualPrompt = isStoryboardMode && type === 'start'
+             ? narrativeContent
+             : (idx >= 0 ? newKeyframes[idx].visualPrompt : prompt);
 
            const newKf: Keyframe = {
                id: kfId,
@@ -582,7 +755,7 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       console.error(e);
       alert(`生成失败: ${e.message}`);
     } finally {
-      setProcessingState(null);
+      releaseKeyframeTask(shot.id, type);
     }
   };
 
@@ -590,7 +763,9 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
     const sKf = shot.keyframes?.find(k => k.type === 'start');
     const eKf = shot.keyframes?.find(k => k.type === 'end');
 
-    if (!sKf?.imageUrl) return alert("请先生成起始帧！");
+    if (!sKf?.imageUrl) return alert(isStoryboardMode ? "请先生成故事板！" : "请先生成起始帧！");
+
+    if (!acquireVideoTask(shot.id)) return;
 
     // Create interval if it doesn't exist
     let currentInterval = shot.interval;
@@ -599,7 +774,7 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
         id: `interval-${shot.id}-${Date.now()}`,
         startKeyframeId: sKf.id,
         endKeyframeId: eKf?.id || '',
-        duration: defaultDuration, // 使用默认时长
+        duration: isStoryboardMode ? 15 : defaultDuration,
         motionStrength: 0.5,
         status: 'pending'
       };
@@ -625,31 +800,40 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       fullPrompt += `. No narration.`;
     }
     
-    setProcessingState({ id: currentInterval.id, type: 'video' });
-    setVideoProgress({ message: '正在初始化视频生成...' });
+    setVideoProgressByShot(prev => ({ ...prev, [shot.id]: { message: '正在初始化视频生成...' } }));
     
     try {
-      // 获取该镜头的参考图（包含角色图片选择逻辑）
-      const referenceImages = getRefImagesForShot(shot);
+      const assetRefImages = getRefImagesForShot(shot);
+      const shotsInScene = project.shots.filter(s => String(s.sceneId) === String(shot.sceneId));
+      const sceneGeneratedKeyframeUrls = shotsInScene.flatMap(s =>
+        (s.keyframes || []).map(k => k.imageUrl).filter((url): url is string => !!url)
+      );
+      const referenceMaterials = isStoryboardMode
+        ? buildStoryboardVideoReferenceMaterials(assetRefImages, sceneGeneratedKeyframeUrls)
+        : undefined;
 
       const result = await generateVideo(
           fullPrompt, // 使用包含对白的完整 prompt
-          sKf.imageUrl,
-          endImageUrl, // Only pass if it exists
+          isStoryboardMode ? undefined : sKf.imageUrl,
+          isStoryboardMode ? undefined : endImageUrl,
           localVideoModel || undefined, // 使用选择的视频模型
           localVideoResolution, // 使用选择的分辨率
           localVideoRatio, // 使用选择的比例
           currentInterval.duration, // 传递时长参数
           project.sessionId, // 传递项目的 sessionId
           (message: string, current?: number, total?: number) => {
-            // 进度回调
-            setVideoProgress({ message, current, total });
+            setVideoProgressByShot(prev => ({
+              ...prev,
+              [shot.id]: { message, current, total },
+            }));
           },
           generateAudio, // 传递音频生成选项
           uploadedAudioData || undefined, // 传递上传的音频数据（用于阿里云模型）
           audioUrl || undefined, // 传递音频URL
           useSeed && currentSeed !== null ? currentSeed : undefined, // 传递seed
-          referenceImages // 传递参考图（包含用户选择的剧照或三视图）
+          isStoryboardMode ? undefined : assetRefImages,
+          referenceMaterials,
+          isStoryboardMode // 参考图模式，不用首帧/首尾帧
       );
 
       // 构建更新后的 shots 数组并更新项目
@@ -774,21 +958,16 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
     } catch (e: any) {
       console.error(e);
       
-      // 检查是否是认证失败错误
       if (e.message && (e.message.includes('认证失败') || e.message.includes('401'))) {
         alert('登录已过期，请重新登录');
         window.location.href = '/login';
-        return;
+      } else {
+        alert(`视频生成失败: ${e.message}`);
       }
-      
-      alert(`视频生成失败: ${e.message}`);
     } finally {
-      setProcessingState(null);
-      setVideoProgress(null);
+      releaseVideoTask(shot.id);
     }
   };
-
-  // 删除关键帧
   const handleDeleteKeyframe = (shot: Shot, type: 'start' | 'end') => {
     if (!window.confirm(`确定要删除${type === 'start' ? '起始' : '结束'}帧吗？`)) return;
     
@@ -817,9 +996,8 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       alert('图片文件过大，请选择小于 10MB 的图片');
       return;
     }
-    
-    // 设置上传状态
-    setProcessingState({ id: `upload-${shot.id}-${type}`, type: type === 'start' ? 'kf_start' : 'kf_end' });
+
+    if (!acquireKeyframeTask(shot.id, type)) return;
     
     try {
       // 上传到OSS
@@ -861,11 +1039,9 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
         alert(`图片上传失败: ${error.message || '未知错误'}`);
       }
     } finally {
-      setProcessingState(null);
+      releaseKeyframeTask(shot.id, type);
     }
   };
-
-  // 上传音频文件（用于阿里云模型）
   const handleUploadAudio = (file: File) => {
     // 验证文件类型
     const validTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/m4a', 'audio/aac'];
@@ -1485,7 +1661,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       const url = await generateImage(
         fullPrompt,
         referenceImages,
-        project.imageModel || undefined,
+        localImageModel || project.imageModel || undefined,
         project.sessionId,
         keyframeSize,
         project.imageStyle
@@ -1650,7 +1826,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       const url = await generateImage(
         fullPrompt,
         referenceImages,
-        project.imageModel || undefined,
+        localImageModel || project.imageModel || undefined,
         project.sessionId,
         keyframeSize,
         project.imageStyle
@@ -1938,7 +2114,9 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       setBatchProgress({ 
           current: 0, 
           total: shotsToProcess.length, 
-          message: isRegenerate ? "正在重新生成所有首帧..." : "正在批量生成缺失的首帧..." 
+          message: isStoryboardMode
+            ? (isRegenerate ? "正在重新生成所有故事板..." : "正在批量生成 15 秒故事板...")
+            : (isRegenerate ? "正在重新生成所有首帧..." : "正在批量生成缺失的首帧...") 
       });
 
       for (let i = 0; i < shotsToProcess.length; i++) {
@@ -1966,11 +2144,18 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
              const latestShot = currentShots.find((s: Shot) => s.id === shot.id) || shot;
              
              const existingKf = latestShot.keyframes?.find((k: Keyframe) => k.type === 'start');
-             let prompt = existingKf?.visualPrompt || latestShot.actionSummary;
+             const narrativeContent = resolveStoryboardImagePrompt(latestShot, 'start');
+             const referenceImages = getRefImagesForShot(latestShot, currentShots);
+             const storyboardRefContext = isStoryboardMode
+               ? buildStoryboardRefContextFromShot(latestShot, project.scriptData, referenceImages.length)
+               : undefined;
+             let prompt = isStoryboardMode
+               ? wrapStoryboardImagePrompt(narrativeContent, storyboardRefContext)
+               : narrativeContent;
              const kfId = existingKf?.id || `kf-${latestShot.id}-start-${Date.now()}`;
 
              // 如果是场景的第一个镜头且没有自定义提示词，则强化提示词要求
-             if (!existingKf?.visualPrompt) {
+             if (!isStoryboardMode && !existingKf?.visualPrompt) {
                 const shotsInScene = currentShots.filter(s => String(s.sceneId) === String(latestShot.sceneId));
                 if (shotsInScene.length > 0 && shotsInScene[0].id === latestShot.id) {
                     const allCharNames = latestShot.characters.map(id => {
@@ -1983,16 +2168,16 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
              }
 
              // 获取参考图：传入 currentShots 保证能获取到当前循环中刚刚生成的“场景首帧”
-             const referenceImages = getRefImagesForShot(latestShot, currentShots);
              // 关键帧使用 2560x1440 尺寸
              const keyframeSize = { width: 2560, height: 1440 };
              const url = await generateImage(
                prompt, 
                referenceImages, 
-               project.imageModel || undefined, 
+               localImageModel || project.imageModel || undefined, 
                project.sessionId, 
                keyframeSize,
-               project.imageStyle
+               project.imageStyle,
+               isStoryboardMode ? 'storyboard' : 'default'
              );
 
              // 更新 local currentShots 供下一次迭代使用
@@ -2003,7 +2188,9 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                 const newKf: Keyframe = {
                     id: kfId,
                     type: 'start',
-                    visualPrompt: kIdx >= 0 ? newKeyframes[kIdx].visualPrompt : prompt,
+                    visualPrompt: isStoryboardMode
+                      ? narrativeContent
+                      : (kIdx >= 0 ? newKeyframes[kIdx].visualPrompt : prompt),
                     imageUrl: url,
                     status: 'completed'
                 };
@@ -2020,7 +2207,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                     type: 'scene',
                     name: `镜头 ${shotIndex + 1} 起始帧 (批量)`,
                     imageUrl: url,
-                    visualPrompt: prompt,
+                    visualPrompt: isStoryboardMode ? narrativeContent : prompt,
                     metadata: {
                         shotNumber: shotIndex + 1,
                         atmosphere: scene?.atmosphere || undefined
@@ -2823,10 +3010,93 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                   <LayoutGrid className="w-5 h-5 text-indigo-500" />
                   导演工作台
                   <span className="text-xs text-zinc-600 font-mono font-normal uppercase tracking-wider bg-black/30 px-2 py-1 rounded">Director Workbench</span>
+                  {isStoryboardMode && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-1 rounded flex items-center gap-1">
+                      <Clapperboard className="w-3 h-3" />
+                      故事板模式
+                    </span>
+                  )}
               </h2>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+              {isStoryboardMode ? (
+              <>
+              {/* 故事板模式：生图 / 生视频模型 */}
+              <div className="flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                <select
+                  value={localImageModel}
+                  onChange={(e) => setLocalImageModel(e.target.value)}
+                  disabled={loadingImageModels}
+                  title="生图模型"
+                  className="w-[132px] bg-[#141414] border border-zinc-700 text-white px-2 py-1.5 text-xs rounded-md appearance-none focus:border-amber-500/60 focus:outline-none transition-all cursor-pointer disabled:opacity-50 truncate"
+                >
+                  {loadingImageModels ? (
+                    <option value="">加载中...</option>
+                  ) : imageModels.length === 0 ? (
+                    <option value="">无生图模型</option>
+                  ) : (
+                    imageModels.map((model) => (
+                      <option key={model.id} value={model.modelName} title={model.modelDescribe || model.modelName}>
+                        {model.modelDescribe || model.modelName}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Video className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                <select
+                  value={localVideoModel}
+                  onChange={(e) => setLocalVideoModel(e.target.value)}
+                  disabled={loadingModels}
+                  title="生视频模型"
+                  className="w-[132px] bg-[#141414] border border-zinc-700 text-white px-2 py-1.5 text-xs rounded-md appearance-none focus:border-amber-500/60 focus:outline-none transition-all cursor-pointer disabled:opacity-50 truncate"
+                >
+                  {loadingModels ? (
+                    <option value="">加载中...</option>
+                  ) : videoModels.length === 0 ? (
+                    <option value="">无生视频模型</option>
+                  ) : (
+                    videoModels.map((model) => {
+                      const describe = model.modelDescribe || model.modelName;
+                      return (
+                        <option key={model.id} value={model.modelName} title={model.remark || describe}>
+                          {describe}
+                        </option>
+                      );
+                    })
+                  )}
+                </select>
+              </div>
+              </>
+              ) : (
+              <>
+              {/* 生图模型选择器 */}
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-zinc-500" />
+                <select
+                  value={localImageModel}
+                  onChange={(e) => setLocalImageModel(e.target.value)}
+                  disabled={loadingImageModels}
+                  title="生图模型"
+                  className="w-[140px] bg-[#141414] border border-zinc-700 text-white px-2 py-1.5 text-xs rounded-md appearance-none focus:border-zinc-500 focus:outline-none transition-all cursor-pointer disabled:opacity-50 truncate"
+                >
+                  {loadingImageModels ? (
+                    <option value="">加载中...</option>
+                  ) : imageModels.length === 0 ? (
+                    <option value="">无生图模型</option>
+                  ) : (
+                    imageModels.map((model) => (
+                      <option key={model.id} value={model.modelName} title={model.modelDescribe || model.modelName}>
+                        {model.modelDescribe || model.modelName}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
               {/* 视频模型选择器 */}
               <div className="flex items-center gap-2">
                 <Video className="w-4 h-4 text-zinc-500" />
@@ -2834,7 +3104,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                   value={localVideoModel}
                   onChange={(e) => setLocalVideoModel(e.target.value)}
                   disabled={loadingModels}
-                  className="bg-[#141414] border border-zinc-700 text-white px-3 py-1.5 text-xs rounded-md appearance-none focus:border-zinc-500 focus:outline-none transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px]"
+                  className="w-[140px] bg-[#141414] border border-zinc-700 text-white px-2 py-1.5 text-xs rounded-md appearance-none focus:border-zinc-500 focus:outline-none transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed truncate"
                 >
                   {loadingModels ? (
                     <option value="">加载中...</option>
@@ -2932,13 +3202,184 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                   }`}
               >
                   <Sparkles className="w-3 h-3" />
-                  {allStartFramesGenerated ? '重新生成所有首帧' : '批量生成首帧'}
+                  {isStoryboardMode
+                    ? (allStartFramesGenerated ? '重新生成故事板' : '批量生成故事板')
+                    : (allStartFramesGenerated ? '重新生成所有首帧' : '批量生成首帧')}
               </button>
+              </>
+              )}
           </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex flex-col">
+          {isStoryboardMode ? (
+            <div className="flex-1 overflow-y-auto bg-[#0F0F0F]">
+              <div className="sticky top-0 z-10 px-4 py-3 border-b border-zinc-800 bg-[#151515]/95 backdrop-blur">
+                <div className="flex items-center justify-between mb-2 md:mb-0">
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">镜头排布</h3>
+                    <p className="text-[10px] text-zinc-600 mt-0.5">{project.shots.length} 个镜头 · 15s/段</p>
+                  </div>
+                </div>
+                <div className="hidden md:grid grid-cols-[56px_1fr_1fr_1fr] gap-4 text-[10px] font-bold text-zinc-600 uppercase tracking-widest">
+                  <span></span>
+                  <span>分镜脚本</span>
+                  <span className="text-center">故事板</span>
+                  <span className="text-center">视频</span>
+                </div>
+              </div>
+
+              <div className="p-4 space-y-3">
+                {project.shots.map((shot, idx) => {
+                  const sbKf = shot.keyframes?.find((k: Keyframe) => k.type === 'start');
+                  const narrativeText = buildNarrativeFromShot(shot);
+                  const isImageGenerating = isKeyframeProcessing(shot.id, 'start');
+                  const isVideoGenerating = isVideoProcessing(shot.id);
+                  const shotVideoProgress = videoProgressByShot[shot.id];
+
+                  return (
+                    <div
+                      key={shot.id}
+                      className="grid grid-cols-1 md:grid-cols-[56px_1fr_1fr_1fr] gap-4 p-4 bg-[#1A1A1A] border border-zinc-800 rounded-xl items-start hover:border-zinc-700 transition-colors"
+                    >
+                      {/* 镜头序号 + 操作 */}
+                      <div className="flex md:flex-col items-center md:items-start gap-2 md:gap-1 pt-1">
+                        <div className="flex items-center gap-1">
+                          <span className="font-mono text-sm font-bold text-amber-400 whitespace-nowrap">
+                            {String(idx + 1).padStart(2, '0')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddShot(idx);
+                            }}
+                            className="p-1 hover:bg-green-900/40 rounded text-zinc-500 hover:text-green-400 transition-colors"
+                            title="在此后添加镜头"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteShot(shot.id, e)}
+                            className="p-1 hover:bg-red-900/40 rounded text-zinc-500 hover:text-red-400 transition-colors"
+                            title="删除镜头"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-zinc-600 uppercase truncate max-w-full">{shot.cameraMovement || 'Static'}</span>
+                      </div>
+
+                      {/* 分镜脚本（可编辑，宽度与故事板/视频三等分，高度随宽度 16:9） */}
+                      <div className="flex flex-col gap-2 min-w-0 w-full">
+                        <div className="w-full aspect-video">
+                          <textarea
+                            value={narrativeText}
+                            onChange={(e) => handleStoryboardNarrativeChange(shot.id, e.target.value)}
+                            className="w-full h-full bg-[#0A0A0A] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 resize-none leading-relaxed"
+                            placeholder="[0.0s-5.0s] 镜头描述...&#10;对白: &quot;...&quot;"
+                          />
+                        </div>
+                        <div className="hidden md:block py-1.5 text-[10px] leading-none invisible shrink-0" aria-hidden="true">
+                          占位
+                        </div>
+                      </div>
+
+                      {/* 故事板图片 */}
+                      <div className="flex flex-col gap-2 min-w-0 w-full">
+                        <div className="w-full aspect-video bg-black rounded-lg border border-zinc-800 overflow-hidden relative">
+                          {sbKf?.imageUrl ? (
+                            <img
+                              src={sbKf.imageUrl}
+                              alt={`镜头 ${idx + 1} 故事板`}
+                              className="w-full h-full object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={() => setPreviewImage(sbKf.imageUrl!)}
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-700 gap-1">
+                              <ImageIcon className="w-6 h-6 opacity-30" />
+                              <span className="text-[10px] font-mono">待生成</span>
+                            </div>
+                          )}
+                          {isImageGenerating && (
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                              <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleGenerateKeyframe(shot, 'start', narrativeText)}
+                          disabled={isImageGenerating || !narrativeText.trim()}
+                          className="w-full py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+                        >
+                          {isImageGenerating ? (
+                            <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
+                          ) : (
+                            <><Sparkles className="w-3 h-3" /> {sbKf?.imageUrl ? '重新生成' : '生成故事板'}</>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* 视频 */}
+                      <div className="flex flex-col gap-2 min-w-0 w-full">
+                        <div className="w-full aspect-video bg-black rounded-lg border border-zinc-800 overflow-hidden relative">
+                          {shot.interval?.videoUrl ? (
+                            <video src={shot.interval.videoUrl} controls className="w-full h-full object-contain" />
+                          ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-700 gap-1">
+                              {isVideoGenerating && shotVideoProgress ? (
+                                <>
+                                  <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+                                  <span className="text-[10px] text-zinc-500 px-2 text-center line-clamp-2">{shotVideoProgress.message}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Video className="w-6 h-6 opacity-30" />
+                                  <span className="text-[10px] font-mono">待生成</span>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {isVideoGenerating && shot.interval?.videoUrl && (
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                              <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleGenerateVideo(shot)}
+                          disabled={!sbKf?.imageUrl || isVideoGenerating}
+                          className={`w-full py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors ${
+                            shot.interval?.videoUrl
+                              ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                              : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                          } ${(!sbKf?.imageUrl || isVideoGenerating) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          {isVideoGenerating ? (
+                            <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
+                          ) : (
+                            <><Video className="w-3 h-3" /> {shot.interval?.videoUrl ? '重新生成' : '生成视频'}</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* 添加镜头 */}
+                <div
+                  onClick={() => handleAddShot()}
+                  className="flex items-center justify-center gap-2 p-4 bg-[#1A1A1A]/50 border-2 border-dashed border-zinc-800 rounded-xl cursor-pointer transition-all hover:border-amber-500/40 hover:bg-[#1A1A1A] text-zinc-600 hover:text-amber-400"
+                >
+                  <Plus className="w-5 h-5" />
+                  <span className="text-xs font-bold uppercase tracking-wider">添加镜头</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+          <div className="flex-1 overflow-hidden flex min-h-0">
           
           {/* Grid View - Responsive Logic */}
           <div ref={leftPanelRef} className="flex-1 min-w-[200px] overflow-y-auto p-4 transition-all duration-500 ease-in-out">
@@ -3198,7 +3639,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                                            </div>
                                        )}
                                        {/* Loading State */}
-                                       {((startKf && processingState?.id === startKf.id) || (processingState?.type === 'kf_start' && !startKf)) && (
+                                       {isKeyframeProcessing(activeShot.id, 'start') && (
                                             <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                                                 <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
                                             </div>
@@ -3209,7 +3650,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                                    <div className="flex gap-1">
                                        <button 
                                            onClick={() => handleGenerateKeyframe(activeShot, 'start')}
-                                           disabled={processingState?.type === 'kf_start'}
+                                           disabled={isKeyframeProcessing(activeShot.id, 'start')}
                                            className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase rounded transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
                                        >
                                            <Sparkles className="w-3 h-3" />
@@ -3331,7 +3772,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                                            </div>
                                        )}
                                        {/* Loading State */}
-                                       {((endKf && processingState?.id === endKf.id) || (processingState?.type === 'kf_end' && !endKf)) && (
+                                       {isKeyframeProcessing(activeShot.id, 'end') && (
                                             <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                                                 <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
                                             </div>
@@ -3342,7 +3783,7 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                                    <div className="flex gap-1">
                                        <button 
                                            onClick={() => handleGenerateKeyframe(activeShot, 'end')}
-                                           disabled={processingState?.type === 'kf_end'}
+                                           disabled={isKeyframeProcessing(activeShot.id, 'end')}
                                            className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase rounded transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
                                        >
                                            <Sparkles className="w-3 h-3" />
@@ -3427,21 +3868,21 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                                </div>
                            ) : (
                                <div className="w-full aspect-video bg-zinc-900/50 rounded-lg border border-dashed border-zinc-800 flex items-center justify-center">
-                                   {processingState?.type === 'video' && videoProgress ? (
+                                   {isVideoProcessing(activeShot.id) && videoProgressByShot[activeShot.id] ? (
                                        <div className="flex flex-col items-center gap-3">
                                            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
                                            <div className="text-center">
-                                               <p className="text-xs text-zinc-400 mb-2">{videoProgress.message}</p>
-                                               {videoProgress.current !== undefined && videoProgress.total !== undefined && (
+                                               <p className="text-xs text-zinc-400 mb-2">{videoProgressByShot[activeShot.id].message}</p>
+                                               {videoProgressByShot[activeShot.id].current !== undefined && videoProgressByShot[activeShot.id].total !== undefined && (
                                                    <>
                                                        <div className="w-48 h-1.5 bg-zinc-800 rounded-full overflow-hidden mb-1">
                                                            <div 
                                                                className="h-full bg-indigo-500 transition-all duration-300" 
-                                                               style={{ width: `${(videoProgress.current / videoProgress.total) * 100}%` }}
+                                                               style={{ width: `${(videoProgressByShot[activeShot.id].current! / videoProgressByShot[activeShot.id].total!) * 100}%` }}
                                                            ></div>
                                                        </div>
                                                        <p className="text-[10px] text-zinc-600 font-mono">
-                                                           {videoProgress.current}/{videoProgress.total} ({Math.round((videoProgress.current / videoProgress.total) * 100)}%)
+                                                           {videoProgressByShot[activeShot.id].current}/{videoProgressByShot[activeShot.id].total} ({Math.round((videoProgressByShot[activeShot.id].current! / videoProgressByShot[activeShot.id].total!) * 100)}%)
                                                        </p>
                                                    </>
                                                )}
@@ -3589,14 +4030,14 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
 
                            <button
                              onClick={() => handleGenerateVideo(activeShot)}
-                             disabled={!startKf?.imageUrl || processingState?.type === 'video'}
+                             disabled={!startKf?.imageUrl || isVideoProcessing(activeShot.id)}
                              className={`w-full py-3 rounded-lg font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${
                                activeShot.interval?.videoUrl 
                                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
                                  : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20'
                              } ${(!startKf?.imageUrl) ? 'opacity-50 cursor-not-allowed' : ''}`}
                            >
-                             {processingState?.type === 'video' ? (
+                             {isVideoProcessing(activeShot.id) ? (
                                 <>
                                   <Loader2 className="w-4 h-4 animate-spin" />
                                   生成视频中...
@@ -3776,6 +4217,8 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                        {/* Section 1: Context (Moved to Bottom) */}
                        {renderSceneContext()}
                   </div>
+              </div>
+          )}
               </div>
           )}
       </div>

@@ -4,6 +4,11 @@ import type { VideoGenProject, CharacterVariation } from '../../types/videogen';
 import { generateImage, generateVisualPrompts, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, IMAGE_STYLES, uploadFileToOss } from '../../services/videogenService';
 import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 import { chatApi } from '../../services/chatApi';
+import {
+  getInitialImageModel,
+  resolvePreferredImageModel,
+  persistImageModel,
+} from './videoGenModelPrefs';
 
 // 跨项目资源项
 interface CrossProjectAsset {
@@ -31,7 +36,7 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
   // 图像模型选择
   const [imageModels, setImageModels] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [localImageModel, setLocalImageModel] = useState(project.imageModel || '');
+  const [localImageModel, setLocalImageModel] = useState(getInitialImageModel(project.imageModel));
   
   // Prompt 编辑状态
   const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
@@ -68,6 +73,12 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
   const [crossProjectAssets, setCrossProjectAssets] = useState<CrossProjectAsset[]>([]);
   const [loadingCrossAssets, setLoadingCrossAssets] = useState(false);
 
+  // 切换项目时恢复已保存的模型选择
+  useEffect(() => {
+    const savedImage = getInitialImageModel(project.imageModel);
+    if (savedImage) setLocalImageModel(savedImage);
+  }, [project.id]);
+
   // 加载图像模型列表
   useEffect(() => {
     const loadImageModels = async () => {
@@ -75,28 +86,17 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
       try {
         const response = await modelApi.getModelList();
         if (response.code === 200 && response.data) {
-          // 只显示 category 为 "text2image" 的模型
           const imgModels = sortModelsByOrderBy(
             response.data.filter((m: ModelInfo) => m.category === 'text2image')
           );
           setImageModels(imgModels);
-          
-          // 如果项目已有设置的模型，使用项目的模型
-          if (project.imageModel) {
-            setLocalImageModel(project.imageModel);
-          } 
-          // 如果项目没有设置模型，尝试从 localStorage 读取上次使用的模型
-          else if (imgModels.length > 0) {
-            const lastUsedModel = localStorage.getItem('lastUsedImageModel');
-            let modelToUse = imgModels[0].modelName; // 默认使用第一个
-            
-            // 如果有上次使用的模型，且该模型在当前列表中，则使用它
-            if (lastUsedModel && imgModels.some((m: ModelInfo) => m.modelName === lastUsedModel)) {
-              modelToUse = lastUsedModel;
+
+          const selected = resolvePreferredImageModel(project.imageModel, imgModels);
+          if (selected) {
+            setLocalImageModel(selected);
+            if (selected !== project.imageModel) {
+              updateProject({ imageModel: selected });
             }
-            
-            setLocalImageModel(modelToUse);
-            updateProject({ imageModel: modelToUse });
           }
         }
       } catch (error) {
@@ -109,12 +109,13 @@ const StageAssets: React.FC<Props> = ({ project, updateProject }) => {
     loadImageModels();
   }, []);
 
-  // 当本地模型选择改变时，更新项目并保存到 localStorage
+  // 当本地模型选择改变时，更新项目并记住用户选择
   useEffect(() => {
     if (localImageModel && localImageModel !== project.imageModel) {
       updateProject({ imageModel: localImageModel });
-      // 保存用户选择的模型到 localStorage
-      localStorage.setItem('lastUsedImageModel', localImageModel);
+    }
+    if (localImageModel) {
+      persistImageModel(localImageModel);
     }
   }, [localImageModel]);
 

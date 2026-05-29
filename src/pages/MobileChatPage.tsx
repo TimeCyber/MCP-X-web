@@ -255,13 +255,146 @@ const formatMessageTime = (timeStr?: string | number, currentLanguage: string = 
   }
 };
 
+// 工具调用步骤
+interface ToolCallStep {
+  stage: string;
+  type: string;
+  message: string;
+  tool: string;
+  timestamp: number;
+}
+
+/** 从 JSON 字符串解析工具调用步骤（支持未闭合的流式片段） */
+const parseToolCallFromJsonStr = (jsonStr: string): ToolCallStep | null => {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (data.type === 'tool_call' && data.stage && data.message && data.tool) {
+      return {
+        stage: data.stage,
+        type: data.type,
+        message: data.message,
+        tool: data.tool,
+        timestamp: data.timestamp || Date.now()
+      };
+    }
+  } catch {
+    if (!jsonStr.includes('tool_call')) return null;
+    const tool = jsonStr.match(/"tool"\s*:\s*"([^"]+)"/)?.[1];
+    const message = jsonStr.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
+    const stage = jsonStr.match(/"stage"\s*:\s*"([^"]+)"/)?.[1];
+    if (!tool && !message) return null;
+    return {
+      stage: stage || 'running',
+      type: 'tool_call',
+      message: message || '执行中...',
+      tool: tool || 'unknown',
+      timestamp: Date.now()
+    };
+  }
+  return null;
+};
+
+/** 括号匹配提取 data: 后的 JSON 块（含流式未闭合块） */
+const collectToolCallStepsFromContent = (content: string): ToolCallStep[] => {
+  const steps: ToolCallStep[] = [];
+
+  const pushStep = (step: ToolCallStep) => {
+    const key = `${step.tool}::${step.stage}`;
+    const idx = steps.findIndex(s => `${s.tool}::${s.stage}` === key);
+    if (idx >= 0) {
+      steps[idx] = step;
+    } else {
+      steps.push(step);
+    }
+  };
+
+  let searchFrom = 0;
+  while (searchFrom < content.length) {
+    const dataIdx = content.indexOf('data:', searchFrom);
+    if (dataIdx === -1) break;
+    const braceStart = content.indexOf('{', dataIdx);
+    if (braceStart === -1) break;
+
+    let braceCount = 0;
+    let braceEnd = -1;
+    for (let i = braceStart; i < content.length; i++) {
+      if (content[i] === '{') braceCount++;
+      else if (content[i] === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          braceEnd = i + 1;
+          break;
+        }
+      }
+    }
+
+    const jsonStr = braceEnd === -1
+      ? content.substring(braceStart)
+      : content.substring(braceStart, braceEnd);
+
+    const step = parseToolCallFromJsonStr(jsonStr);
+    if (step) pushStep(step);
+
+    searchFrom = braceEnd === -1 ? content.length : braceEnd;
+  }
+
+  return steps.sort((a, b) => a.timestamp - b.timestamp);
+};
+
+const parseToolCallSteps = (content: string): ToolCallStep[] => collectToolCallStepsFromContent(content);
+
+const removeToolCallStepsFromContent = (content: string) => {
+  return content.replace(/data:\s*\{[^}]*"type"\s*:\s*"tool_call"[^}]*\}/g, '').trim();
+};
+
+const removeToolExecutionsFromContent = (content: string) => {
+  let filteredContent = content;
+  let toolExecutionStart = filteredContent.indexOf('ToolExecution{');
+  while (toolExecutionStart !== -1) {
+    let braceCount = 0;
+    let endIndex = toolExecutionStart;
+    for (let i = toolExecutionStart; i < filteredContent.length; i++) {
+      if (filteredContent[i] === '{') braceCount++;
+      else if (filteredContent[i] === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          endIndex = i + 1;
+          break;
+        }
+      }
+    }
+    if (braceCount === 0) {
+      filteredContent = filteredContent.substring(0, toolExecutionStart) + filteredContent.substring(endIndex);
+    } else {
+      break;
+    }
+    toolExecutionStart = filteredContent.indexOf('ToolExecution{');
+  }
+  return filteredContent;
+};
+
 // 移动端聊天消息组件
-const MobileChatMessage: React.FC<{ message: ChatMessageVo; isTyping?: boolean }> = ({ 
-  message, 
-  isTyping 
+const MobileChatMessage: React.FC<{
+  message: ChatMessageVo;
+  isTyping?: boolean;
+  toolCallSteps?: ToolCallStep[];
+}> = ({
+  message,
+  isTyping,
+  toolCallSteps = []
 }) => {
   const { currentLanguage, t } = useLanguage();
   const isUser = message.role === 'user';
+  const [showToolCalls, setShowToolCalls] = useState(false);
+  const hasToolSteps = toolCallSteps.length > 0;
+
+  // 流式工具调用过程中自动展开工具栏
+  React.useEffect(() => {
+    if (hasToolSteps && isTyping) {
+      setShowToolCalls(true);
+    }
+  }, [hasToolSteps, isTyping, toolCallSteps.length]);
+
   const [showRefModal, setShowRefModal] = useState(false);
   const [refLinks, setRefLinks] = useState<any[]>([]);
   const [refLoading, setRefLoading] = useState(false);
@@ -292,7 +425,11 @@ const MobileChatMessage: React.FC<{ message: ChatMessageVo; isTyping?: boolean }
   };
 
   const { imageUrls, referenceLinks, contentWithoutRefs } = React.useMemo(() => {
-    const raw = message.content || '';
+    let raw = message.content || '';
+    if (!isUser) {
+      raw = removeToolExecutionsFromContent(raw);
+      raw = removeToolCallStepsFromContent(raw);
+    }
     const { cleanContent, imageUrls } = parseImages(raw);
 
     // 提取“参考来源”后的链接列表
@@ -312,7 +449,74 @@ const MobileChatMessage: React.FC<{ message: ChatMessageVo; isTyping?: boolean }
     const contentWithoutRefs = cleanContent.split(/参考来源[:：]/)[0]?.trim() || cleanContent;
 
     return { imageUrls, referenceLinks: links, contentWithoutRefs };
-  }, [message.content]);
+  }, [message.content, isUser]);
+
+  const renderToolCallSteps = () => {
+    if (!toolCallSteps || toolCallSteps.length === 0) return null;
+
+    const toolGroups: Record<string, ToolCallStep[]> = {};
+    toolCallSteps.forEach(step => {
+      const tool = step.tool || 'unknown';
+      if (!toolGroups[tool]) toolGroups[tool] = [];
+      toolGroups[tool].push(step);
+    });
+
+    const lastStep = toolCallSteps[toolCallSteps.length - 1];
+    const isComplete = lastStep?.stage === 'complete';
+    const hasError = toolCallSteps.some(s => s.stage?.includes('error') || s.stage?.includes('failed'));
+
+    const getStepIcon = (stage: string) => {
+      if (stage?.includes('complete') || stage?.includes('success')) return '✓';
+      if (stage?.includes('error') || stage?.includes('failed')) return '✗';
+      return '›';
+    };
+
+    return (
+      <div className="mb-2 rounded-xl border border-slate-200/60 bg-slate-50/50 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowToolCalls(!showToolCalls)}
+          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-100/50 transition-colors"
+        >
+          <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-medium ${
+            isComplete ? 'bg-emerald-100 text-emerald-600' : hasError ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
+          }`}>
+            {isComplete ? '✓' : hasError ? '!' : <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />}
+          </div>
+          <span className="flex-1 text-left text-xs font-medium text-slate-700">
+            {isComplete ? '已完成' : '正在执行'} 工具调用
+          </span>
+          <span className="text-[10px] text-slate-400">{Object.keys(toolGroups).length} 个工具</span>
+          <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showToolCalls ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {showToolCalls && (
+          <div className="border-t border-slate-200/60 max-h-40 overflow-y-auto">
+            {Object.entries(toolGroups).map(([tool, steps], groupIndex) => (
+              <div key={tool} className={groupIndex > 0 ? 'border-t border-slate-100' : ''}>
+                <div className="px-3 py-1.5 bg-white/50 text-xs font-medium text-slate-600">{tool}</div>
+                {steps.map((step, index) => {
+                  const isError = step.stage?.includes('error') || step.stage?.includes('failed');
+                  const isSuccess = step.stage?.includes('success') || step.stage === 'complete';
+                  return (
+                    <div key={`${step.timestamp}-${index}`} className="px-3 py-1 flex items-start gap-2 text-[11px]">
+                      <span className={isError ? 'text-red-500' : isSuccess ? 'text-emerald-500' : 'text-slate-400'}>
+                        {getStepIcon(step.stage)}
+                      </span>
+                      <span className={`flex-1 leading-relaxed ${isError ? 'text-red-600' : isSuccess ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {step.message?.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\s*/gu, '')}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // 加载参考来源列表（调用与 ChatPage 相同的接口）
   const loadReferenceLinks = useCallback(async () => {
@@ -448,18 +652,20 @@ const MobileChatMessage: React.FC<{ message: ChatMessageVo; isTyping?: boolean }
       )}
       
       <div className={`max-w-[280px] ${!isUser ? 'flex-1' : ''}`}>
+        {!isUser && renderToolCallSteps()}
+        {(isTyping && hasToolSteps && !contentWithoutRefs.trim()) ? null : (
         <div className={`px-4 py-2 rounded-2xl text-sm shadow-sm ${
           isUser 
             ? 'bg-gradient-to-br from-blue-500 to-indigo-500 text-white rounded-br-md' 
             : 'bg-white/80 backdrop-blur border border-gray-200 text-gray-800 rounded-bl-md'
         }`}>
-          {isTyping ? (
+          {isTyping && !hasToolSteps ? (
             <div className="flex items-center gap-1">
               <span className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
               <span className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
               <span className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce"></span>
             </div>
-          ) : (
+          ) : contentWithoutRefs.trim() ? (
             <div
               className={`markdown-body text-sm leading-6 break-words ${
                 isUser
@@ -491,12 +697,13 @@ const MobileChatMessage: React.FC<{ message: ChatMessageVo; isTyping?: boolean }
                 {contentWithoutRefs || ''}
               </ReactMarkdown>
             </div>
-          )}
+          ) : null}
           {/* 渲染解析出的图片 */}
           {!isTyping && renderParsedImages()}
           {/* 渲染用户上传的文件 */}
           {!isTyping && renderFileAttachments()}
         </div>
+        )}
         
         {/* 时间显示 */}
         {!isTyping && (
@@ -1360,6 +1567,8 @@ const MobileChatPageContent: React.FC = () => {
   // 最后消息缓存，用于侧边栏实时更新
   const [lastMessages, setLastMessages] = useState<Record<string, { content: string; time: string }>>({});
 
+  // 工具调用步骤（实时流式）
+  const [messageToolCallSteps, setMessageToolCallSteps] = useState<Record<string, ToolCallStep[]>>({});
 
   // 检测语音识别支持情况
   const speechRecognitionSupported = shouldShowSpeechRecognition();
@@ -1956,6 +2165,73 @@ const MobileChatPageContent: React.FC = () => {
     addMessage(currentSessionId!, aiMessage);
     dispatch({ type: 'SET_LOADING', payload: true });
 
+    const handleStreamChunk = (chunk: any) => {
+      const deltaContent = chunk.choices?.[0]?.delta?.content;
+      if (!deltaContent) return;
+
+      aggregatedContent += deltaContent;
+
+      const streamingToolSteps = collectToolCallStepsFromContent(aggregatedContent);
+      if (streamingToolSteps.length > 0) {
+        const messageId = String(aiMessageId);
+        setMessageToolCallSteps(prev => ({
+          ...prev,
+          [messageId]: streamingToolSteps
+        }));
+      }
+
+      if (deltaContent.includes('ToolExecution{') ||
+          deltaContent.includes('data:{"') || deltaContent.includes('data: {"') ||
+          deltaContent.includes('"type":"tool_call"') || deltaContent.includes('"type": "tool_call"')) {
+        return;
+      }
+
+      const lastToolStart = aggregatedContent.lastIndexOf('ToolExecution{');
+      if (lastToolStart !== -1) {
+        const afterStart = aggregatedContent.substring(lastToolStart);
+        let braceCount = 0;
+        let isClosed = false;
+        for (let i = 0; i < afterStart.length; i++) {
+          if (afterStart[i] === '{') braceCount++;
+          else if (afterStart[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              isClosed = true;
+              break;
+            }
+          }
+        }
+        if (!isClosed) return;
+      }
+
+      const lastDataStart = aggregatedContent.lastIndexOf('data:{"');
+      if (lastDataStart !== -1) {
+        const afterDataStart = aggregatedContent.substring(lastDataStart + 5);
+        let braceCount = 0;
+        let isClosed = false;
+        for (let i = 0; i < afterDataStart.length; i++) {
+          if (afterDataStart[i] === '{') braceCount++;
+          else if (afterDataStart[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              isClosed = true;
+              break;
+            }
+          }
+        }
+        if (!isClosed) return;
+      }
+
+      dispatch({
+        type: 'UPDATE_MESSAGE_CONTENT',
+        payload: {
+          sessionId: currentSessionId!,
+          messageId: aiMessageId,
+          deltaContent: deltaContent
+        }
+      });
+    };
+
     try {
       console.log('About to send message with userId:', currentUserId, 'type:', typeof currentUserId);
       
@@ -1992,20 +2268,7 @@ const MobileChatPageContent: React.FC = () => {
             appId: 'mcpx-chat'
           },
           files,
-          (chunk: any) => {
-            const deltaContent = chunk.choices?.[0]?.delta?.content;
-            if (deltaContent) {
-              aggregatedContent += deltaContent;
-              dispatch({
-                type: 'UPDATE_MESSAGE_CONTENT',
-                payload: {
-                  sessionId: currentSessionId!,
-                  messageId: aiMessageId,
-                  deltaContent: deltaContent
-                }
-              });
-            }
-          },
+          handleStreamChunk,
           (error: any) => {
             console.error('流式请求错误:', error);
             toast.error('发送消息失败');
@@ -2015,7 +2278,8 @@ const MobileChatPageContent: React.FC = () => {
 
             // 实时更新当前会话的最后消息数据，用于侧边栏显示
             const finalMessage = state.chatMap[currentSessionId!]?.find(msg => msg.id === aiMessageId);
-            const lastMessageContent = (aggregatedContent && aggregatedContent.trim()) || finalMessage?.content || '';
+            let lastMessageContent = (aggregatedContent && aggregatedContent.trim()) || finalMessage?.content || '';
+            lastMessageContent = removeToolCallStepsFromContent(removeToolExecutionsFromContent(lastMessageContent));
             const lastMessageTime = finalMessage?.createTime || new Date().toISOString();
             updateLastMessageState(currentSessionId!, lastMessageContent, lastMessageTime);
           }
@@ -2031,20 +2295,7 @@ const MobileChatPageContent: React.FC = () => {
             agent: selectedAgentId || undefined,
             appId:"mcpx-chat"
           },
-          (chunk: any) => {
-            const deltaContent = chunk.choices?.[0]?.delta?.content;
-            if (deltaContent) {
-              aggregatedContent += deltaContent;
-              dispatch({
-                type: 'UPDATE_MESSAGE_CONTENT',
-                payload: {
-                  sessionId: currentSessionId!,
-                  messageId: aiMessageId,
-                  deltaContent: deltaContent
-                }
-              });
-            }
-          },
+          handleStreamChunk,
           (error: any) => {
             console.error('流式请求错误:', error);
             toast.error('发送消息失败');
@@ -2054,7 +2305,8 @@ const MobileChatPageContent: React.FC = () => {
 
             // 实时更新当前会话的最后消息数据，用于侧边栏显示
             const finalMessage = state.chatMap[currentSessionId!]?.find(msg => msg.id === aiMessageId);
-            const lastMessageContent = (aggregatedContent && aggregatedContent.trim()) || finalMessage?.content || '';
+            let lastMessageContent = (aggregatedContent && aggregatedContent.trim()) || finalMessage?.content || '';
+            lastMessageContent = removeToolCallStepsFromContent(removeToolExecutionsFromContent(lastMessageContent));
             const lastMessageTime = finalMessage?.createTime || new Date().toISOString();
             updateLastMessageState(currentSessionId!, lastMessageContent, lastMessageTime);
           }
@@ -2154,6 +2406,23 @@ const MobileChatPageContent: React.FC = () => {
 
   const currentSessionId = sessionId || localSessionId || state.currentSessionId;
   const currentMessages = currentSessionId ? state.chatMap[currentSessionId] || [] : [];
+
+  const filteredMessages = React.useMemo(() => {
+    return currentMessages.map(message => {
+      if (!message.content || message.role !== 'assistant') return message;
+
+      let filteredContent = removeToolExecutionsFromContent(message.content);
+      const toolCallSteps = parseToolCallSteps(filteredContent);
+      if (toolCallSteps.length > 0) {
+        filteredContent = removeToolCallStepsFromContent(filteredContent);
+      }
+
+      return {
+        ...message,
+        content: filteredContent.trim()
+      };
+    });
+  }, [currentMessages]);
 
   return (
     <div 
@@ -2334,13 +2603,23 @@ const MobileChatPageContent: React.FC = () => {
           </div>
         ) : (
           <div>
-            {currentMessages.map((message) => (
-              <MobileChatMessage
-                key={message.id}
-                message={message}
-                isTyping={state.loading && message.role === 'assistant' && !message.content.trim()}
-              />
-            ))}
+            {filteredMessages.map((message) => {
+              const messageId = String(message.id);
+              const rawContent = currentMessages.find(m => m.id === message.id)?.content || '';
+              const toolSteps = message.role === 'assistant'
+                ? (messageToolCallSteps[messageId] || parseToolCallSteps(rawContent))
+                : [];
+              const isAssistantStreaming = state.loading && message.role === 'assistant';
+              const isTyping = isAssistantStreaming && !message.content.trim() && toolSteps.length === 0;
+              return (
+                <MobileChatMessage
+                  key={`${message.id}-${toolSteps.length}-${message.content?.length || 0}`}
+                  message={message}
+                  isTyping={isTyping}
+                  toolCallSteps={toolSteps}
+                />
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
         )}

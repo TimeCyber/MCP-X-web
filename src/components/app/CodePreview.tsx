@@ -732,7 +732,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   };
 
   return (
-    <div className={`flex flex-col h-full bg-white rounded-lg shadow-sm border border-slate-200 ${className}`}>
+    <div className={`flex flex-col h-full min-h-0 min-w-0 max-w-full overflow-hidden bg-white rounded-lg shadow-sm border border-slate-200 ${className}`}>
       {/* 预览头部 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
         <div className="flex items-center gap-2">
@@ -870,7 +870,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
       )} */}
 
       {/* 预览/代码内容 */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 min-h-0 relative overflow-hidden">
         {activeTab === 'preview' ? (
           !previewUrl ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-500">
@@ -899,9 +899,9 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
             </>
           )
         ) : (
-          <div className="w-full h-full flex bg-slate-50">
+          <div className="w-full h-full min-h-0 min-w-0 max-w-full flex overflow-hidden bg-slate-50">
             {/* 目录侧栏 */}
-            <div className="w-56 shrink-0 border-r border-slate-200 bg-white overflow-auto p-2">
+            <div className="w-56 shrink-0 border-r border-slate-200 bg-white overflow-y-auto p-2">
               {!fileTree ? (
                 <div className="text-sm text-slate-500 p-2">暂无目录</div>
               ) : (
@@ -911,7 +911,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
               )}
             </div>
             {/* 文件内容区 */}
-            <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
               {/* 代码区工具栏 */}
               {!loadingCode && !codeError && codeText && isOwner && (
                 <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0">
@@ -946,7 +946,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                 </div>
               )}
 
-              <div className="flex-1 overflow-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
                 {!previewUrl ? (
                   <div className="flex flex-col items-center justify-center h-full text-slate-500">
                     <div className="text-4xl mb-4">📄</div>
@@ -971,7 +971,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                   />
                 ) : (
                   /* 只读模式：行号 + 代码 */
-                  <div className="text-[12px] leading-5 font-mono bg-white h-full select-none">
+                  <div className="text-[12px] leading-5 font-mono bg-white w-full min-w-0 max-w-full select-none">
                     {isEditMode && (
                       <div className="px-3 py-1 text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
                         单击/Shift+单击多行，可选中代码发给 AI
@@ -988,7 +988,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                       return (
                         <div
                           key={i}
-                          className={`flex items-start ${inSel ? 'bg-blue-50' : ''}`}
+                          className={`flex items-start min-w-0 w-full max-w-full ${inSel ? 'bg-blue-50' : ''}`}
                           onClick={(e) => {
                             if (!isEditMode) return;
                             const withShift = (e as React.MouseEvent<HTMLDivElement>).shiftKey;
@@ -1010,7 +1010,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
                           }}
                         >
                           <div className="w-12 shrink-0 select-none text-right pr-3 py-0.5 text-slate-400 border-r border-slate-100">{lineNo}</div>
-                          <div className="whitespace-pre-wrap break-words px-3 py-0.5 text-slate-800">{line || '\u00A0'}</div>
+                          <div className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 py-0.5 text-slate-800">{line || '\u00A0'}</div>
                         </div>
                       );
                     })}

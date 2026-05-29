@@ -113,6 +113,19 @@
 ## 🎨 Latest Updates
 
 <details open>
+<summary><b>v0.1.7 — Storyboard Mode · Image 2 · One-Click Web Generation</b></summary>
+
+- 🎬 **Video Studio · Storyboard Mode**: Professional storyboard workflow
+  - **GPT Image 2** generates multi-panel storyboards from scene/character references and shot scripts
+  - **Seedance 2.0** reference-based video generation preserves character and scene consistency
+  - Concurrent multi-shot generation with per-task status and retry on failure
+  - **Best-in-platform video pipeline**: controllable storyboards → reference-guided video
+- 🖼️ **Image Studio · GPT Image 2**: Full integration of **Image 2** — the strongest image model on the platform
+- 💻 **App Builder · One-Click Web**: Improved stability and preview for AI-generated web pages
+
+</details>
+
+<details>
 <summary><b>v0.1.6 — HTML to PPT Export & App Builder Enhancements</b></summary>
 
 - 📊 **HTML to PPT Export**: App Builder now supports one-click export of AI-generated HTML slides to `.pptx` format
@@ -175,10 +188,11 @@ End-to-end AI video production from script to final cut:
 
 | Feature | Description |
 |---------|-------------|
+| **Storyboard Mode** | **GPT Image 2** storyboards → **Seedance 2.0** reference video — **recommended for highest quality** |
 | Script Analysis | AI auto-analyzes scripts, extracts characters, scenes, story segments |
 | Storyboard Generation | Smart storyboard with camera movement, shot types, keyframes |
-| Characters & Scenes | AI-generated character portraits and scene concept art |
-| Video Generation | Text-to-video / Image-to-video / Start-end frame interpolation |
+| Characters & Scenes | AI-generated portraits and scene art as references for storyboard & video |
+| Video Generation | Text-to-video / Image-to-video / Keyframe interpolation / **Reference mode** |
 | One-click Export | Browser-based video segment merging and export |
 | Asset Library | IndexedDB local storage, reusable character/scene/video assets |
 
@@ -194,14 +208,16 @@ End-to-end AI video production from script to final cut:
 
 > Similar to Bolt / Loveable AI frontend building experience
 
-- Conversational development: describe requirements in natural language → AI generates code in real-time
+- **One-click web generation**: describe your page in natural language, get a full preview-ready site instantly
+- Conversational development with multi-turn layout and style iteration
 - Multi-framework: HTML / React / Vue / Static sites
-- Live preview · Visual editing · One-click deploy · Code download
+- Live preview · Visual editing · One-click deploy · Code download · HTML to PPT export
 
 ### 🖼️ 4. AI Image Editor
 
-> Supports: Qwen / Seed / Nano Banana / **Nano Banana Pro 4K** etc.
+> Supports: Qwen / Seed / Nano Banana / **GPT Image 2** / Nano Banana Pro 4K etc.
 
+- **GPT Image 2**: strongest image model on the platform for text-to-image and image-to-image
 - Text-to-image · Image-to-image · Mask inpainting
 - Image-to-video · @ symbol reference-based video generation
 - Multi-model selection · Multiple size options

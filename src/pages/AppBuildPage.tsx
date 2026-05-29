@@ -72,6 +72,164 @@ const CollapsibleCode: React.FC<{ className?: string; children: React.ReactNode;
   );
 };
 
+// 兼容 redacted_thinking / think 开闭标签（可任意组合）
+const THINK_TAG = '(?:redacted_thinking|think)';
+const THINK_BLOCK_REGEX = new RegExp(`<${THINK_TAG}>([\\s\\S]*?)<\\/${THINK_TAG}>`, 'gi');
+const THINK_BLOCK_STRIP_REGEX = new RegExp(`<${THINK_TAG}>[\\s\\S]*?<\\/${THINK_TAG}>`, 'gi');
+const THINK_OPEN_REGEX = new RegExp(`<${THINK_TAG}>`, 'i');
+const THINK_OPEN_TAIL_REGEX = new RegExp(`<${THINK_TAG}>([\\s\\S]*)$`, 'i');
+const THINK_OPEN_TAIL_STRIP_REGEX = new RegExp(`<${THINK_TAG}>[\\s\\S]*$`, 'i');
+const THINK_ANY_TAG_REGEX = new RegExp(`<\\/?${THINK_TAG}>`, 'gi');
+
+const removeToolExecutionsFromContent = (content: string) => {
+  let filteredContent = content;
+  let toolExecutionStart = filteredContent.indexOf('ToolExecution{');
+  while (toolExecutionStart !== -1) {
+    let braceCount = 0;
+    let endIndex = toolExecutionStart;
+    for (let i = toolExecutionStart; i < filteredContent.length; i++) {
+      if (filteredContent[i] === '{') braceCount++;
+      else if (filteredContent[i] === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          endIndex = i + 1;
+          break;
+        }
+      }
+    }
+    if (braceCount === 0) {
+      filteredContent = filteredContent.substring(0, toolExecutionStart) + filteredContent.substring(endIndex);
+    } else {
+      break;
+    }
+    toolExecutionStart = filteredContent.indexOf('ToolExecution{');
+  }
+  return filteredContent;
+};
+
+/** 解析助手消息：分离 thinking、工具调用行与正文 */
+const parseAssistantMessage = (content: string): {
+  visibleContent: string;
+  thinkContent: string;
+  toolCallLines: string[];
+} => {
+  try {
+    const thinkParts: string[] = [];
+    const toolCallLines: string[] = [];
+    let text = content;
+
+    text = text.replace(/^\s*\[工具调用\]\s*([^\n]*)/gm, (_, detail: string) => {
+      const line = detail.trim();
+      if (line) toolCallLines.push(line);
+      return '';
+    });
+
+    text = removeToolExecutionsFromContent(text);
+    text = text.replace(/data:\s*\{[^}]*"type"\s*:\s*"tool_call"[^}]*\}/g, '');
+
+    const blockMatches = [...text.matchAll(THINK_BLOCK_REGEX)];
+    blockMatches.forEach((m) => {
+      if (m[1]?.trim()) thinkParts.push(m[1].trim());
+    });
+    text = text.replace(THINK_BLOCK_STRIP_REGEX, '');
+
+    const openMatch = text.match(THINK_OPEN_TAIL_REGEX);
+    if (openMatch) {
+      if (openMatch[1]?.trim()) thinkParts.push(openMatch[1].trim());
+      text = text.replace(THINK_OPEN_TAIL_STRIP_REGEX, '');
+    }
+
+    text = text.replace(new RegExp(`([\\s\\S]*?)<\\/${THINK_TAG}>`, 'gi'), (_full, before: string) => {
+      if (THINK_OPEN_REGEX.test(before)) {
+        return before.replace(THINK_ANY_TAG_REGEX, '');
+      }
+      if (before.trim()) thinkParts.push(before.trim());
+      return '';
+    });
+
+    text = text
+      .replace(THINK_ANY_TAG_REGEX, '')
+      .replace(/^\s*\[系统\][^\n]*\n?/gm, '')
+      .replace(/^\s*⚙️[^\n]*\n?/gm, '')
+      .replace(/^\s*正在流式写入文件[^\n]*\n?/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return {
+      visibleContent: text,
+      thinkContent: thinkParts.join('\n\n'),
+      toolCallLines,
+    };
+  } catch {
+    return { visibleContent: content, thinkContent: '', toolCallLines: [] };
+  }
+};
+
+/** 思考过程折叠面板：默认仅显示 Thinking，展开后以浅灰展示内容 */
+const ThinkingPanel: React.FC<{ content: string }> = ({ content }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (!content) return null;
+
+  return (
+    <div className="mb-2 ml-1 pl-3 border-l-2 border-gray-200 text-gray-500">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-600 select-none"
+      >
+        <svg
+          className={`w-3 h-3 shrink-0 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <span className="font-medium tracking-wide text-gray-500">Thinking</span>
+      </button>
+      {expanded && (
+        <div className="mt-1.5 pl-1 text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 工具调用折叠面板 */
+const ToolCallsPanel: React.FC<{ lines: string[] }> = ({ lines }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (!lines.length) return null;
+
+  return (
+    <div className="mb-2 ml-1 pl-3 border-l-2 border-gray-200 text-gray-500">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-600 select-none"
+      >
+        <svg
+          className={`w-3 h-3 shrink-0 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <span className="font-medium text-gray-500">工具调用</span>
+        <span className="text-gray-400">({lines.length})</span>
+      </button>
+      {expanded && (
+        <ul className="mt-1.5 pl-1 space-y-1 text-xs text-gray-400">
+          {lines.map((line, i) => (
+            <li key={i} className="font-mono leading-relaxed text-gray-400">{line}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
 interface ElementInfo {
   tagName: string;
   id?: string;
@@ -80,6 +238,53 @@ interface ElementInfo {
   selector: string;
   pagePath?: string;
 }
+
+/** 从 SSE 数据块解析 token 用量（兼容多种后端字段） */
+const extractTokenCountFromChunk = (chunk: unknown): number | null => {
+  if (chunk == null) return null;
+  if (typeof chunk === 'number' && Number.isFinite(chunk)) return chunk;
+  if (typeof chunk !== 'object') return null;
+
+  const c = chunk as Record<string, unknown>;
+  const pickNum = (obj: Record<string, unknown>, keys: string[]): number | null => {
+    for (const key of keys) {
+      const v = obj[key];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return null;
+  };
+
+  let total = pickNum(c, ['totalTokens', 'total_tokens', 'tokenCount', 'token_count', 'tokens']);
+  if (total != null) return total;
+
+  if (c.usage && typeof c.usage === 'object') {
+    const u = c.usage as Record<string, unknown>;
+    total = pickNum(u, ['totalTokens', 'total_tokens']);
+    if (total != null) return total;
+    const prompt = pickNum(u, ['prompt_tokens', 'promptTokens']);
+    const completion = pickNum(u, ['completion_tokens', 'completionTokens']);
+    if (prompt != null && completion != null) return prompt + completion;
+  }
+
+  if (typeof c.d === 'string' && c.d.trim().startsWith('{')) {
+    try {
+      return extractTokenCountFromChunk(JSON.parse(c.d));
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+};
+
+const formatGenerationDuration = (ms: number, zh: boolean): string => {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (zh) {
+    return min > 0 ? `已生成 ${min} 分钟 ${sec} 秒` : `已生成 ${sec} 秒`;
+  }
+  return min > 0 ? `Generated ${min}m ${sec}s` : `Generated ${sec}s`;
+};
 
 export const AppBuildPage: React.FC = () => {
   const { id: appId } = useParams<{ id?: string }>();
@@ -92,6 +297,12 @@ export const AppBuildPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  /** 当前/最近一次 AI 生成的耗时与 token 统计 */
+  const [generationStats, setGenerationStats] = useState<{ elapsedMs: number; totalTokens: number | null }>({
+    elapsedMs: 0,
+    totalTokens: null,
+  });
+  const generationStartRef = useRef<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [loading, setLoading] = useState(false);
   // 网页预览自动刷新计数（每十分钟+1，驱动预览URL变更从而刷新）
@@ -277,6 +488,25 @@ export const AppBuildPage: React.FC = () => {
   const activeMiniGame = useMemo<null | 'dino' | 'tank'>(() => {
     if (!isGenerating) return null;
     return Math.random() < 0.5 ? 'dino' : 'tank';
+  }, [isGenerating]);
+
+  // 生成中计时：每秒更新耗时，结束后保留最终耗时
+  useEffect(() => {
+    if (isGenerating) {
+      generationStartRef.current = Date.now();
+      setGenerationStats({ elapsedMs: 0, totalTokens: null });
+      const timer = window.setInterval(() => {
+        const start = generationStartRef.current;
+        if (start == null) return;
+        setGenerationStats((prev) => ({ ...prev, elapsedMs: Date.now() - start }));
+      }, 1000);
+      return () => window.clearInterval(timer);
+    }
+    if (generationStartRef.current != null) {
+      const finalElapsed = Date.now() - generationStartRef.current;
+      generationStartRef.current = null;
+      setGenerationStats((prev) => ({ ...prev, elapsedMs: finalElapsed }));
+    }
   }, [isGenerating]);
 
   // 滚动到底部（仅当用户没有主动上翻时执行）
@@ -567,6 +797,11 @@ export const AppBuildPage: React.FC = () => {
         (chunk: any) => {
           try {
             console.log('🔄 AppBuildPage收到数据块:', chunk);
+
+            const tokenCount = extractTokenCountFromChunk(chunk);
+            if (tokenCount != null) {
+              setGenerationStats((prev) => ({ ...prev, totalTokens: tokenCount }));
+            }
             
             // 尝试多种方式提取内容
             let deltaContent = '';
@@ -579,7 +814,7 @@ export const AppBuildPage: React.FC = () => {
               deltaContent = chunk;
             } else if (chunk.content) {
               deltaContent = chunk.content;
-            } else {
+            } else if (tokenCount == null) {
               console.log('⚠️ 未识别的数据格式:', chunk);
               deltaContent = JSON.stringify(chunk);
             }
@@ -929,10 +1164,10 @@ export const AppBuildPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 主内容区域 */}
-      <div className="flex flex-1 gap-6 p-4 md:p-6 overflow-hidden">
+      {/* 主内容区域：固定 40% / 60%（2fr:3fr），避免长代码撑开布局 */}
+      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] flex-1 min-h-0 min-w-0 gap-6 p-4 md:p-6 overflow-hidden">
         {/* 左侧聊天区域 */}
-        <div className="flex flex-col w-2/5 bg-white rounded-lg shadow-sm border border-slate-200">
+        <div className="flex flex-col min-h-0 min-w-0 overflow-hidden bg-white rounded-lg shadow-sm border border-slate-200">
           {/* 消息区域 */}
           <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4">
             {/* 加载更多历史 */}
@@ -997,47 +1232,84 @@ export const AppBuildPage: React.FC = () => {
                       <div className="flex justify-start">
                         <div className="flex flex-col items-start">
                         <div className="max-w-[80%] px-4 py-2 bg-slate-50 text-slate-800 rounded-2xl border border-slate-200 shadow-sm">
-                          {message.loading ? (
-                            <div className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-600"></div>
-                              <span className="text-sm">AI 正在思考...</span>
-                            </div>
-                          ) : (
-                            <div className="prose prose-sm max-w-none markdown-body ai-message-markdown">
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                rehypePlugins={[rehypeRaw]}
-                                components={{
-                                  code({ node, className, children }) {
-                                    const isBlock = String(children).includes('\n');
-                                    if (isBlock) {
-                                      const text = String(children);
-                                      const first = text.split('\n')[0] || '';
-                                      const pos: any = (node as any)?.position?.start || {};
-                                      const key = `ai:${pos.line || ''}:${pos.column || ''}:${first}`;
-                                      return (
-                                        <CollapsibleCode className={className} persistKey={key} openStore={codeOpenMapRef}>
-                                          {String(children)}
-                                        </CollapsibleCode>
-                                      );
-                                    }
-                                    return <code className={className}>{children}</code>;
-                                  },
-                                  pre({ children }) {
-                                    return <div>{children}</div>;
-                                  }
-                                }}
-                              >
-                                {message.content}
-                              </ReactMarkdown>
+                          {(() => {
+                            const { visibleContent, thinkContent, toolCallLines } = parseAssistantMessage(message.content || '');
+                            const showLoading = message.loading && !visibleContent && !thinkContent && toolCallLines.length === 0;
+                            if (showLoading) {
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-600"></div>
+                                  <span className="text-sm">AI 正在思考...</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="ai-message-markdown">
+                                {(thinkContent || toolCallLines.length > 0) && (
+                                  <div className="not-prose mb-1">
+                                    {thinkContent ? <ThinkingPanel content={thinkContent} /> : null}
+                                    {toolCallLines.length > 0 ? <ToolCallsPanel lines={toolCallLines} /> : null}
+                                  </div>
+                                )}
+                                {message.loading && !visibleContent && (thinkContent || toolCallLines.length > 0) && (
+                                  <div className="not-prose flex items-center gap-2 mt-1 text-xs text-gray-400">
+                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-400"></div>
+                                    <span>生成中…</span>
+                                  </div>
+                                )}
+                                {visibleContent ? (
+                                  <div className="prose prose-sm max-w-none markdown-body">
+                                  <ReactMarkdown
+                                    remarkPlugins={[remarkGfm]}
+                                    rehypePlugins={[rehypeRaw]}
+                                    components={{
+                                      code({ node, className, children }) {
+                                        const isBlock = String(children).includes('\n');
+                                        if (isBlock) {
+                                          const text = String(children);
+                                          const first = text.split('\n')[0] || '';
+                                          const pos: any = (node as any)?.position?.start || {};
+                                          const key = `ai:${pos.line || ''}:${pos.column || ''}:${first}`;
+                                          return (
+                                            <CollapsibleCode className={className} persistKey={key} openStore={codeOpenMapRef}>
+                                              {String(children)}
+                                            </CollapsibleCode>
+                                          );
+                                        }
+                                        return <code className={className}>{children}</code>;
+                                      },
+                                      pre({ children }) {
+                                        return <div>{children}</div>;
+                                      }
+                                    }}
+                                  >
+                                    {visibleContent}
+                                  </ReactMarkdown>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                          {index === messages.length - 1 && message.type === 'ai' && (isGenerating || generationStats.elapsedMs > 0 || generationStats.totalTokens != null) && (
+                            <div className="mt-1 ml-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                              {isGenerating && (
+                                <span className="animate-pulse">
+                                  {currentLanguage === 'zh' ? 'AI正在生成' : 'AI is generating'}
+                                </span>
+                              )}
+                              {(isGenerating || generationStats.elapsedMs > 0) && (
+                                <span>{formatGenerationDuration(generationStats.elapsedMs, currentLanguage === 'zh')}</span>
+                              )}
+                              {generationStats.totalTokens != null && (
+                                <span>
+                                  {currentLanguage === 'zh'
+                                    ? `Token：${generationStats.totalTokens.toLocaleString()}`
+                                    : `Tokens: ${generationStats.totalTokens.toLocaleString()}`}
+                                </span>
+                              )}
                             </div>
                           )}
-                        </div>
-                          {index === messages.length - 1 && isGenerating && (
-                            <div className="mt-1 ml-1 text-xs text-slate-500 animate-pulse">
-                              {currentLanguage === 'zh' ? 'AI正在生成' : 'AI is generating'}
-                      </div>
-                    )}
                   </div>
               </div>
             )}
@@ -1165,8 +1437,8 @@ export const AppBuildPage: React.FC = () => {
         </div>
 
         {/* 右侧预览区域 */}
-        <div className="flex-1 relative flex flex-col">
-          <div className="flex-1 relative">
+        <div className="min-h-0 min-w-0 overflow-hidden relative flex flex-col">
+          <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
             <CodePreview
               previewUrl={effectivePreviewUrl}
               isGenerating={isGenerating}

@@ -7,7 +7,8 @@ import StageAssets from '../components/video-gen/StageAssets';
 import StageDirector from '../components/video-gen/StageDirector';
 import StageExport from '../components/video-gen/StageExport';
 import type { VideoGenProject } from '../types/videogen';
-import { saveProjectToDB } from '../services/videogenService';
+import { inferVideoType } from '../types/videogen';
+import { saveProjectToDB, loadProjectFromDB } from '../services/videogenService';
 import { chatApi } from '../services/chatApi';
 import { api } from '../services/api';
 import { toast } from '../utils/toast';
@@ -228,6 +229,31 @@ const VideoGenPage: React.FC = () => {
     isProjectLoadedRef.current = false;
     initialProjectIdRef.current = proj.id;
 
+    // 从本地 DB 补全可能被服务端同步丢失的字段（如 videoType），本地优先
+    try {
+      const localFull = await loadProjectFromDB(proj.id);
+      proj = {
+        ...proj,
+        videoType: localFull.videoType || proj.videoType,
+        storyboardAnalysis: localFull.storyboardAnalysis || proj.storyboardAnalysis,
+        imageStyle: localFull.imageStyle || proj.imageStyle,
+        imageModel: localFull.imageModel || proj.imageModel,
+        videoModel: localFull.videoModel || proj.videoModel,
+        textModel: localFull.textModel || proj.textModel,
+        videoRatio: localFull.videoRatio || proj.videoRatio,
+        seed: localFull.seed ?? proj.seed,
+      };
+    } catch {
+      // 本地无缓存，使用传入的项目数据
+    }
+
+    // 根据分镜特征推断故事板模式并补写
+    const inferredVideoType = inferVideoType(proj);
+    if (!proj.videoType && inferredVideoType) {
+      proj = { ...proj, videoType: inferredVideoType };
+      await saveProjectToDB(proj, true).catch(() => {});
+    }
+
     // 确保项目有 sessionId（兼容旧项目）
     if (!proj.sessionId || proj.sessionId.startsWith('temp_session_') || proj.sessionId === 'undefined' || proj.sessionId === 'null') {
       const userId = localStorage.getItem('userId');
@@ -276,12 +302,13 @@ const VideoGenPage: React.FC = () => {
     if (projectRef.current && isProjectLoadedRef.current) {
       setSavingProject(true);
       try {
-        // 检查服务端同步是否完成，未完成时只保存到本地
+        // 退出时立即保存，不依赖自动保存 debounce
+        const toSave = projectRef.current;
         const skipServerSync = !isServerSyncCompleted();
         if (skipServerSync) {
           console.log('⏳ 服务端数据尚未同步完成，退出时仅保存到本地');
         }
-        await saveProjectToDB(projectRef.current, skipServerSync);
+        await saveProjectToDB(toSave, skipServerSync);
       } catch (error) {
         console.error('保存项目失败:', error);
       } finally {

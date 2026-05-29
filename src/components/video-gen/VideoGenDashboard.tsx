@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Loader2, Folder, ChevronRight, Calendar, AlertTriangle, Upload, ArrowLeft } from 'lucide-react';
-import type { VideoGenProject } from '../../types/videogen';
+import type { VideoGenProject, Shot } from '../../types/videogen';
+import { inferVideoType } from '../../types/videogen';
 import { createNewProjectState, saveProjectToDB, getAllProjectsMetadata } from '../../services/videogenService';
 import { chatApi } from '../../services/chatApi';
 
@@ -157,23 +158,34 @@ const VideoGenDashboard: React.FC<Props> = ({ onOpenProject }) => {
           });
         };
 
-        const mergedProject: VideoGenProject = {
+        const mergedShots = mergeShots(serverProjectData.shots || [], localProject?.shots || []);
+        const mergedBase: VideoGenProject = {
           id: projectId,
           sessionId: sessionId,
           title: session.sessionTitle || serverProjectData.title || localProject?.title || '未命名项目',
           createdAt: createTime,
-          lastModified: updateTime,
+          lastModified: Math.max(updateTime, localProject?.lastModified || 0),
           stage: serverProjectData.stage || localProject?.stage || 'script',
           targetDuration: serverProjectData.targetDuration || localProject?.targetDuration || '60s',
           language: serverProjectData.language || localProject?.language || '中文',
-          textModel: serverProjectData.textModel || localProject?.textModel || 'deepseek-chat',
-          imageModel: serverProjectData.imageModel || localProject?.imageModel || 'z-image-turbo',
-          videoModel: serverProjectData.videoModel || localProject?.videoModel,
+          // 本地优先：避免服务端旧数据（如 script）覆盖用户已选的故事板模式
+          videoType: localProject?.videoType || serverProjectData.videoType,
+          storyboardAnalysis: localProject?.storyboardAnalysis || serverProjectData.storyboardAnalysis,
+          textModel: localProject?.textModel || serverProjectData.textModel || 'deepseek-chat',
+          imageModel: localProject?.imageModel || serverProjectData.imageModel || 'z-image-turbo',
+          imageStyle: serverProjectData.imageStyle || localProject?.imageStyle,
+          videoModel: localProject?.videoModel || serverProjectData.videoModel,
           videoResolution: serverProjectData.videoResolution || localProject?.videoResolution,
+          videoRatio: serverProjectData.videoRatio || localProject?.videoRatio,
+          seed: serverProjectData.seed ?? localProject?.seed,
           rawScript: serverProjectData.rawScript || localProject?.rawScript || '',
           scriptData: serverProjectData.scriptData || localProject?.scriptData || null,
-          shots: mergeShots(serverProjectData.shots || [], localProject?.shots || []),
+          shots: mergedShots,
           isParsingScript: false,
+        };
+        const mergedProject: VideoGenProject = {
+          ...mergedBase,
+          videoType: mergedBase.videoType || inferVideoType(mergedBase),
         };
 
         syncedSessionIds.add(sessionId);

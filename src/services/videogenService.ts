@@ -3,6 +3,7 @@ import { generateImageFromText, editImage, ReferenceMaterial } from './imageApi'
 import { chatApi, streamChatSend, SendDTO } from './chatApi';
 import config from '../config';
 import type { ScriptData, Shot, Character, Scene, VideoGenProject } from '../types/videogen';
+import { buildStoryboardShotListPrompt, buildStoryboardScriptParsePrompt } from './storyboardAgentService';
 import axios from 'axios';
 
 // IndexedDB 存储服务
@@ -249,7 +250,7 @@ export const resetDatabase = async (): Promise<void> => {
 };
 
 // 创建新项目模板
-export const createNewProjectState = async (videoType?: 'script' | 'promotional' | 'shortvideo'): Promise<VideoGenProject> => {
+export const createNewProjectState = async (videoType?: 'script' | 'promotional' | 'shortvideo' | 'storyboard'): Promise<VideoGenProject> => {
   const id = 'proj_' + Date.now().toString(36);
   const userId = localStorage.getItem('userId');
 
@@ -284,6 +285,26 @@ export const createNewProjectState = async (videoType?: 'script' | 'promotional'
 
       旁白
       重拾青春活力，绽放自然美`;
+  } else if (projectType === 'storyboard') {
+    defaultScript = `标题：雨夜对峙（故事板片段）
+
+场景 1
+内景。狭窄走廊- 夜
+冷白顶光与墙面反光，纵深透视明显
+侦探：（35岁，风衣）与神秘人隔三步对峙
+
+侦探
+我知道是你。
+
+神秘人
+（压低声音）你什么都不知道。
+
+场景 2
+内景。走廊尽头- 夜
+侦探缓慢向前一步，神秘人侧脸没入阴影
+
+旁白
+真相，往往藏在最黑暗的地方`;
   } else if (projectType === 'shortvideo') {
     // 短视频制作示例
     defaultScript = `标题：美食探店短视频
@@ -512,6 +533,213 @@ const cleanJsonString = (str: string): string => {
   return fallback;
 };
 
+/** 从流式 chunk 中取出助手正文，忽略工具调用等 SSE 噪声 */
+const appendAssistantStreamText = (chunk: any): string | null => {
+  if (!chunk || chunk.type === 'tool_call' || chunk.type === 'tool_executed' || chunk.type === 'agent_step') {
+    return null;
+  }
+  const content = chunk?.choices?.[0]?.delta?.content;
+  if (typeof content !== 'string' || !content) return null;
+  const trimmed = content.trimStart();
+  if (trimmed.startsWith('data:')) return null;
+  if (/^\{[\s\S]*"type"\s*:\s*"tool_call"/.test(trimmed)) return null;
+  if (/^\{[\s\S]*"type"\s*:\s*"tool_executed"/.test(trimmed)) return null;
+  return content;
+};
+
+/** 从 start 位置起提取平衡花括号的 JSON 对象 */
+const extractBalancedJsonObject = (text: string, start: number): string | null => {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.substring(start, i + 1);
+    }
+  }
+  return null;
+};
+
+const scriptJsonHasScenes = (obj: any): boolean => {
+  if (!obj || typeof obj !== 'object') return false;
+  const scenes = obj.scenes ?? obj.scene ?? obj.场景;
+  if (Array.isArray(scenes)) return scenes.length > 0;
+  if (scenes && typeof scenes === 'object') return Object.keys(scenes).length > 0;
+  return false;
+};
+
+/** 将模型返回的各种字段形态规范为 ScriptData 结构 */
+const normalizeParsedScriptData = (parsed: any) => {
+  const title = parsed?.title ?? parsed?.剧本标题 ?? '未命名剧本';
+  const genre = parsed?.genre ?? parsed?.类型 ?? '通用';
+  const logline = parsed?.logline ?? parsed?.梗概 ?? parsed?.storyline ?? '';
+
+  let characters: any[] = parsed?.characters ?? parsed?.角色 ?? [];
+  if (!Array.isArray(characters) && characters && typeof characters === 'object') {
+    characters = Object.values(characters);
+  }
+
+  let scenes: any[] = parsed?.scenes ?? parsed?.scene ?? parsed?.场景 ?? [];
+  if (!Array.isArray(scenes) && scenes && typeof scenes === 'object') {
+    scenes = Object.entries(scenes).map(([id, val]) => ({
+      id,
+      ...(typeof val === 'object' && val ? val : { location: String(val) })
+    }));
+  }
+
+  let storyParagraphs: any[] =
+    parsed?.storyParagraphs ?? parsed?.paragraphs ?? parsed?.story_paragraphs ?? parsed?.段落 ?? [];
+  if (!Array.isArray(storyParagraphs) && storyParagraphs && typeof storyParagraphs === 'object') {
+    storyParagraphs = Object.values(storyParagraphs);
+  }
+
+  const normalizeScene = (s: any, fallbackId: string) => ({
+    id: String(s?.id ?? fallbackId),
+    location: String(s?.location ?? s?.地点 ?? s?.name ?? '主场景'),
+    time: String(s?.time ?? s?.时间 ?? '日'),
+    atmosphere: String(s?.atmosphere ?? s?.场景描述 ?? s?.description ?? s?.布局 ?? '室内空间与陈设')
+  });
+
+  scenes = scenes
+    .filter(Boolean)
+    .map((s: any, i: number) => normalizeScene(s, `scene${i + 1}`));
+
+  storyParagraphs = storyParagraphs
+    .filter(Boolean)
+    .map((p: any, i: number) => ({
+      id: typeof p?.id === 'number' ? p.id : i + 1,
+      text: String(p?.text ?? p?.content ?? p?.段落 ?? p ?? ''),
+      sceneRefId: String(p?.sceneRefId ?? p?.sceneId ?? p?.scene_id ?? 'scene1')
+    }));
+
+  if (scenes.length === 0 && storyParagraphs.length > 0) {
+    const refIds = [...new Set(storyParagraphs.map((p) => p.sceneRefId).filter(Boolean))];
+    scenes = refIds.map((id, i) =>
+      normalizeScene({ id, location: `场景 ${i + 1}` }, id)
+    );
+  }
+
+  if (scenes.length === 0) {
+    scenes = [normalizeScene({ id: 'scene1', location: title || '主场景' }, 'scene1')];
+    storyParagraphs = storyParagraphs.length
+      ? storyParagraphs.map((p) => ({ ...p, sceneRefId: 'scene1' }))
+      : [{ id: 1, text: logline || title || '故事段落', sceneRefId: 'scene1' }];
+  }
+
+  if (storyParagraphs.length === 0 && scenes.length > 0) {
+    storyParagraphs = scenes.map((s, i) => ({
+      id: i + 1,
+      text: logline || `${s.location}。${s.atmosphere}`.trim(),
+      sceneRefId: s.id
+    }));
+  }
+
+  storyParagraphs = storyParagraphs.map((p) => {
+    const ref = scenes.some((s) => s.id === p.sceneRefId) ? p.sceneRefId : scenes[0].id;
+    return { ...p, sceneRefId: ref };
+  });
+
+  return {
+    title: String(title),
+    genre: String(genre),
+    logline: String(logline),
+    characters: characters.map((c: any, i: number) => ({
+      ...c,
+      id: String(c?.id ?? `char${i + 1}`),
+      name: String(c?.name ?? c?.角色名 ?? `角色${i + 1}`),
+      gender: String(c?.gender ?? c?.性别 ?? ''),
+      age: String(c?.age ?? c?.年龄 ?? ''),
+      personality: String(c?.personality ?? c?.appearance ?? c?.视觉描述 ?? ''),
+      variations: Array.isArray(c?.variations) ? c.variations : []
+    })),
+    scenes,
+    storyParagraphs
+  };
+};
+
+/** 从模型回复中提取剧本结构化 JSON */
+const extractScriptDataJson = (text: string): string => {
+  const source = text?.trim() || '';
+  if (!source) throw new Error('无法从响应中提取JSON');
+
+  const tryParseCandidate = (raw: string): string | null => {
+    const cleaned = cleanJsonString(raw.trim());
+    if (!cleaned) return null;
+    try {
+      const obj = JSON.parse(cleaned);
+      if (scriptJsonHasScenes(obj)) return cleaned;
+    } catch {
+      /* ignore */
+    }
+    return null;
+  };
+
+  const codeBlocks = [...source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (let i = codeBlocks.length - 1; i >= 0; i--) {
+    const hit = tryParseCandidate(codeBlocks[i][1]);
+    if (hit) return hit;
+  }
+  if (codeBlocks.length > 0) {
+    return cleanJsonString(codeBlocks[codeBlocks.length - 1][1].trim());
+  }
+
+  const markers = ['"scenes"', '"storyParagraphs"', '"characters"', '"title"'];
+  for (const marker of markers) {
+    let searchFrom = 0;
+    while (searchFrom < source.length) {
+      const idx = source.indexOf(marker, searchFrom);
+      if (idx === -1) break;
+      searchFrom = idx + marker.length;
+      const start = source.lastIndexOf('{', idx);
+      if (start === -1) continue;
+      const extracted = extractBalancedJsonObject(source, start);
+      if (!extracted) continue;
+      const hit = tryParseCandidate(extracted);
+      if (hit) return hit;
+    }
+  }
+
+  let pos = 0;
+  while (pos < source.length) {
+    const start = source.indexOf('{', pos);
+    if (start === -1) break;
+    const extracted = extractBalancedJsonObject(source, start);
+    if (!extracted) {
+      pos = start + 1;
+      continue;
+    }
+    const hit = tryParseCandidate(extracted);
+    if (hit) return hit;
+    pos = start + 1;
+  }
+
+  const firstBrace = source.indexOf('{');
+  if (firstBrace !== -1) {
+    const extracted = extractBalancedJsonObject(source, firstBrace);
+    if (extracted) return cleanJsonString(extracted);
+  }
+
+  throw new Error('无法从响应中提取JSON');
+};
+
 /**
  * 使用 AI 解析剧本数据
  */
@@ -519,12 +747,15 @@ export const parseScriptToData = async (
   rawText: string,
   language: string = '中文',
   textModel?: string,
-  onProgress?: (text: string) => void
+  onProgress?: (text: string) => void,
+  videoType?: 'script' | 'promotional' | 'shortvideo' | 'storyboard'
 ): Promise<ScriptData> => {
   const userId = localStorage.getItem('userId');
   if (!userId) throw new Error('用户未登录');
 
-  const prompt = `你是一个专业的剧本分析师。请分析以下剧本文本，并以JSON格式输出结构化数据。
+  const prompt = videoType === 'storyboard'
+    ? buildStoryboardScriptParsePrompt(rawText, language)
+    : `你是一个专业的剧本分析师。请分析以下剧本文本，并以JSON格式输出结构化数据。
 
 要求：
 1. 提取标题、类型、故事梗概（使用${language}）
@@ -569,19 +800,21 @@ export const parseScriptToData = async (
       messages: [{ role: 'user', content: prompt }],
       model: textModel || 'deepseek-chat',
       stream: true,
-      userId: parseInt(userId),
-      appId: 'mcpx-video-studio'
+      userId,
+      appId: 'mcpx-video-studio',
+      search: false,
+      internet: false,
+      isMcp: false,
+      sysPrompt: '你是剧本结构化助手。禁止调用联网搜索、网页抓取等任何工具。只根据用户提供的文本创作，直接输出 JSON，不要输出 markdown 代码块外的说明文字。'
     };
 
     streamChatSend(
       sendData,
       (chunk) => {
-        if (chunk.choices?.[0]?.delta?.content) {
-          const content = chunk.choices[0].delta.content;
+        const content = appendAssistantStreamText(chunk);
+        if (content) {
           fullResponse += content;
-          if (onProgress) {
-            onProgress(fullResponse);
-          }
+          onProgress?.(fullResponse);
         }
       },
       (error) => {
@@ -589,44 +822,26 @@ export const parseScriptToData = async (
       },
       () => {
         try {
-          // 尝试从响应中提取 JSON
-          const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            throw new Error('无法从响应中提取JSON');
-          }
-          const text = cleanJsonString(jsonMatch[0]);
+          const text = extractScriptDataJson(fullResponse);
           const parsed = JSON.parse(text);
 
-          // Validate parsed data structure
           if (!parsed || typeof parsed !== 'object') {
             throw new Error('解析结果不是有效的JSON对象');
           }
-          if (!parsed.scenes || !Array.isArray(parsed.scenes) || parsed.scenes.length === 0) {
+
+          const normalized = normalizeParsedScriptData(parsed);
+          if (!normalized.scenes.length) {
             throw new Error('未能从剧本中提取出有效场景，请检查剧本格式或重试');
           }
 
-          const characters = Array.isArray(parsed.characters)
-            ? parsed.characters.map((c: any) => ({
-              ...c,
-              id: String(c.id),
-              variations: []
-            }))
-            : [];
-          const scenes = Array.isArray(parsed.scenes)
-            ? parsed.scenes.map((s: any) => ({ ...s, id: String(s.id) }))
-            : [];
-          const storyParagraphs = Array.isArray(parsed.storyParagraphs)
-            ? parsed.storyParagraphs.map((p: any) => ({ ...p, sceneRefId: String(p.sceneRefId) }))
-            : [];
-
           resolve({
-            title: parsed.title || "未命名剧本",
-            genre: parsed.genre || "通用",
-            logline: parsed.logline || "",
-            language: language,
-            characters,
-            scenes,
-            storyParagraphs
+            title: normalized.title,
+            genre: normalized.genre,
+            logline: normalized.logline,
+            language,
+            characters: normalized.characters,
+            scenes: normalized.scenes,
+            storyParagraphs: normalized.storyParagraphs
           });
         } catch (e: any) {
           console.error("解析剧本数据失败:", e, fullResponse);
@@ -710,7 +925,7 @@ const parsePartialShotList = (jsonText: string): any[] => {
 export const generateShotList = async (
   scriptData: ScriptData, 
   textModel?: string, 
-  videoType?: 'script' | 'promotional' | 'shortvideo',
+  videoType?: 'script' | 'promotional' | 'shortvideo' | 'storyboard',
   onShotsUpdate?: (shots: Shot[]) => void
 ): Promise<Shot[]> => {
   if (!scriptData.scenes || scriptData.scenes.length === 0) {
@@ -894,6 +1109,17 @@ ${JSON.stringify(scriptData.characters.map(c => ({ id: c.id, name: c.name, perso
 - 突出商业价值和品牌传播
 - 根据 ${scene.atmosphere} 调整商业氛围
 `;
+    } else if (videoTypeConfig === 'storyboard') {
+      prompt = buildStoryboardShotListPrompt({
+        lang,
+        sceneId: String(scene.id),
+        location: scene.location,
+        time: scene.time,
+        atmosphere: scene.atmosphere,
+        genre: scriptData.genre,
+        paragraphs,
+        charactersJson: JSON.stringify(scriptData.characters.map(c => ({ id: c.id, name: c.name, personality: c.personality }))),
+      });
     } else if (videoTypeConfig === 'shortvideo') {
       // 短视频制作 prompt
       prompt = `你是一位经验丰富的社交媒体短视频导演和内容创意专家。请为以下内容生成吸引人的短视频分镜列表。
@@ -1273,7 +1499,8 @@ export const generateImage = async (
   imageModel?: string,
   sessionId?: string,
   size?: { width: number; height: number },
-  imageStyle?: string
+  imageStyle?: string,
+  imageGenMode: 'default' | 'storyboard' = 'default'
 ): Promise<string> => {
   // 处理风格提示词
   let finalPrompt = prompt;
@@ -1309,9 +1536,13 @@ export const generateImage = async (
 
         console.log(`使用 ${images.length} 张参考图片生成图像, sessionId: ${sessionId}, appId: ${appId}, size: ${defaultSize.width}x${defaultSize.height}`);
 
+        const editInstruction = imageGenMode === 'storyboard'
+          ? `Generate a multi-panel film storyboard sheet matching this prompt: "${truncatedPrompt}". Strictly preserve character appearance, scene environment, and FULL COLOR visual style from ALL reference images — match the same realism, color palette, lighting and rendering style as references. Do NOT convert to black-and-white, sketch, or line-art. Do NOT redesign faces, costumes, or scenery. Only compose reference characters and scenes into storyboard panels with poses, shot sizes, and camera movement as described.`
+          : `Generate a cinematic shot matching this prompt: "${truncatedPrompt}". Maintain visual consistency with the reference images provided.`;
+
         const result = await editImage(
           images,
-          `Generate a cinematic shot matching this prompt: "${truncatedPrompt}". Maintain visual consistency with the reference images provided.`,
+          editInstruction,
           undefined,
           model,
           sessionId,
@@ -1374,6 +1605,7 @@ export const generateVideo = async (
   seed?: number, // 生成视频时使用的seed值
   referenceImages?: string[], // 额外的参考图（如角色图、场景图）
   referenceMaterials?: ReferenceMaterial[], // @功能引用的素材
+  referenceVideoMode?: boolean, // 参考图模式：不走首帧/首尾帧，使用 referenceMaterials
 ): Promise<VideoGenerationResult> => {
   const userId = localStorage.getItem('userId');
   const token = localStorage.getItem('token');
@@ -1415,8 +1647,8 @@ export const generateVideo = async (
     requestBody.seed = seed;
   }
 
-  // 如果提供了额外的参考图，添加 refImages 参数
-  if (referenceImages && referenceImages.length > 0) {
+  // 如果提供了额外的参考图，添加 refImages 参数（故事板参考图模式仅用 referenceMaterials）
+  if (!referenceVideoMode && referenceImages && referenceImages.length > 0) {
     requestBody.refImages = referenceImages;
     console.log(`添加了 ${referenceImages.length} 张参考图到视频生成请求`);
   }
@@ -1430,7 +1662,13 @@ export const generateVideo = async (
   console.log(`生成视频请求: sessionId=${sessionId}, appId=${appId}, model=${requestBody.model}, duration=${requestBody.duration}s, audio=${audio}, hasAudioData=${!!audioData}, hasAudioUrl=${!!audioUrl}, seed=${seed}`);
 
   // 根据参数自动识别生成类型
-  if (startImageUrl && endImageUrl) {
+  if (referenceVideoMode) {
+    const primaryRefUrl = referenceMaterials?.[0]?.url;
+    if (primaryRefUrl) {
+      requestBody.imageUrl = primaryRefUrl;
+    }
+    console.log('参考图模式: 仅 referenceMaterials，不使用首帧/首尾帧/refImages');
+  } else if (startImageUrl && endImageUrl) {
     // 首尾帧生成视频 - 使用 firstFrameUrl 和 lastFrameUrl 参数
     requestBody.firstFrameUrl = startImageUrl;
     requestBody.lastFrameUrl = endImageUrl;
@@ -1505,9 +1743,10 @@ export const generateVideo = async (
               clearTimeout(timeoutId);
               clearInterval(activityCheckInterval);
               resolve({ videoUrl, lastFrameUrl: lastFrameUrl || undefined, seed: extractedSeed });
-            } else if (!hasError) {
+            } else {
+              clearTimeout(timeoutId);
               clearInterval(activityCheckInterval);
-              reject(new Error('视频生成完成但未返回URL'));
+              reject(new Error(hasError ? '视频生成失败' : '视频生成完成但未返回URL'));
             }
             break;
           }
@@ -1587,9 +1826,10 @@ export const generateVideo = async (
                     clearTimeout(timeoutId);
                     clearInterval(activityCheckInterval);
                     resolve({ videoUrl, lastFrameUrl: lastFrameUrl || undefined, seed: extractedSeed });
-                  } else if (!hasError) {
+                  } else {
+                    clearTimeout(timeoutId);
                     clearInterval(activityCheckInterval);
-                    reject(new Error('视频生成完成但未返回URL'));
+                    reject(new Error(hasError ? '视频生成失败' : '视频生成完成但未返回URL'));
                   }
                   return;
                 }
@@ -1639,8 +1879,15 @@ export const generateVideo = async (
                   } else if (data.error) {
                     // 错误信息
                     hasError = true;
+                    clearTimeout(timeoutId);
                     clearInterval(activityCheckInterval);
-                    reject(new Error(data.error.message || '视频生成失败'));
+                    reject(new Error(data.error.message || data.error.msg || '视频生成失败'));
+                    return;
+                  } else if (data.code !== undefined && data.code !== 200) {
+                    hasError = true;
+                    clearTimeout(timeoutId);
+                    clearInterval(activityCheckInterval);
+                    reject(new Error(data.msg || data.message || '视频生成失败'));
                     return;
                   } else if (data.status) {
                     // 状态更新
