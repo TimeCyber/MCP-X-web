@@ -15,7 +15,7 @@ import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
-import { cacheMediaUrl, loadMediaImage, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
+import { loadMediaImage, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
@@ -648,7 +648,6 @@ const ImageEditorPage: React.FC = () => {
       const x = 200 + col * (displayWidth + 100);
       const y = 200 + row * (displayHeight + 100);
 
-      if (url.startsWith('http')) cacheMediaUrl(url).catch(() => {});
       elements.push({
         id: generateId(),
         type: 'image',

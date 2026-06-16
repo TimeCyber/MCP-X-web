@@ -54,17 +54,17 @@ const CollapsibleCode: React.FC<{ className?: string; children: React.ReactNode;
   };
 
   return (
-    <div className="border border-slate-200 rounded-md mb-3">
+    <div className="border border-slate-200 rounded-md mb-3 min-w-0 max-w-full overflow-hidden">
       <button
         type="button"
         onClick={handleToggle}
-        className="w-full px-2 py-1 text-xs flex items-center justify-between bg-slate-100 hover:bg-slate-200 rounded-t-md"
+        className="w-full px-2 py-1 text-xs flex items-center justify-between bg-slate-100 hover:bg-slate-200 rounded-t-md min-w-0"
       >
-        <span className="text-slate-700">{open ? '收起代码' : '展开代码'}</span>
-        <span className="ml-2 text-slate-500 font-mono truncate max-w-[60%]">{firstLine}</span>
+        <span className="text-slate-700 shrink-0">{open ? '收起代码' : '展开代码'}</span>
+        <span className="ml-2 text-slate-500 font-mono truncate min-w-0 max-w-[60%]">{firstLine}</span>
       </button>
       {open && (
-        <pre className="max-h-80 overflow-auto overflow-x-auto p-2 bg-white rounded-b-md w-full max-w-full">
+        <pre className="max-h-80 overflow-auto p-2 bg-white rounded-b-md w-full max-w-full">
           <code className={`${className || ''} whitespace-pre-wrap break-words`}>{content}</code>
         </pre>
       )}
@@ -1169,7 +1169,7 @@ export const AppBuildPage: React.FC = () => {
         {/* 左侧聊天区域 */}
         <div className="flex flex-col min-h-0 min-w-0 overflow-hidden bg-white rounded-lg shadow-sm border border-slate-200">
           {/* 消息区域 */}
-          <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4">
+          <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-w-0">
             {/* 加载更多历史 */}
             {hasMoreHistory && (
               <div className="text-center mb-4">
@@ -1192,19 +1192,19 @@ export const AppBuildPage: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-4 min-w-0 w-full">
                 {messages.map((message, index) => (
-                  <div key={message.id || index} className="message-item">
+                  <div key={message.id || index} className="message-item min-w-0 w-full">
                     {message.type === 'user' ? (
-                      <div className="flex justify-end">
-                        <div className="max-w-[80%] px-4 py-2 bg-blue-600 text-white rounded-2xl shadow-sm">
-                          <div className="markdown-body user-message-markdown">
+                      <div className="flex justify-end min-w-0 w-full">
+                        <div className="min-w-0 max-w-full w-fit px-4 py-2 bg-blue-600 text-white rounded-2xl shadow-sm overflow-hidden">
+                          <div className="markdown-body user-message-markdown min-w-0 max-w-full break-words">
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}
                               rehypePlugins={[rehypeRaw]}
                               components={{
                                 code({ node, className, children }) {
-                                  const isBlock = String(children).includes('\n');
+                                  const isBlock = !!className || String(children).includes('\n');
                                   if (isBlock) {
                                     const text = String(children);
                                     const first = text.split('\n')[0] || '';
@@ -1229,9 +1229,9 @@ export const AppBuildPage: React.FC = () => {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex justify-start">
-                        <div className="flex flex-col items-start">
-                        <div className="max-w-[80%] px-4 py-2 bg-slate-50 text-slate-800 rounded-2xl border border-slate-200 shadow-sm">
+                      <div className="flex justify-start min-w-0 w-full">
+                        <div className="flex flex-col items-start min-w-0 max-w-full">
+                        <div className="min-w-0 max-w-full w-fit px-4 py-2 bg-slate-50 text-slate-800 rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                           {(() => {
                             const { visibleContent, thinkContent, toolCallLines } = parseAssistantMessage(message.content || '');
                             const showLoading = message.loading && !visibleContent && !thinkContent && toolCallLines.length === 0;
@@ -1258,13 +1258,13 @@ export const AppBuildPage: React.FC = () => {
                                   </div>
                                 )}
                                 {visibleContent ? (
-                                  <div className="prose prose-sm max-w-none markdown-body">
+                                  <div className="prose prose-sm max-w-none markdown-body min-w-0 max-w-full break-words">
                                   <ReactMarkdown
                                     remarkPlugins={[remarkGfm]}
                                     rehypePlugins={[rehypeRaw]}
                                     components={{
                                       code({ node, className, children }) {
-                                        const isBlock = String(children).includes('\n');
+                                        const isBlock = !!className || String(children).includes('\n');
                                         if (isBlock) {
                                           const text = String(children);
                                           const first = text.split('\n')[0] || '';
@@ -1546,12 +1546,24 @@ export const AppBuildPage: React.FC = () => {
       {/* 添加markdown样式 */}
       <style dangerouslySetInnerHTML={{
         __html: `
+          .message-item {
+            max-width: 100%;
+            min-width: 0;
+          }
+          .user-message-markdown,
+          .ai-message-markdown {
+            max-width: 100%;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+          }
           .user-message-markdown {
             color: white !important;
             background: transparent !important;
           }
           .user-message-markdown * {
             color: white !important;
+            max-width: 100%;
           }
           .user-message-markdown code {
             background: rgba(255, 255, 255, 0.2) !important;
@@ -1572,6 +1584,20 @@ export const AppBuildPage: React.FC = () => {
           }
           .ai-message-markdown * {
             color: #0f172a !important;
+            max-width: 100%;
+          }
+          .user-message-markdown table,
+          .ai-message-markdown table {
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+          }
+          .user-message-markdown p,
+          .ai-message-markdown p,
+          .user-message-markdown li,
+          .ai-message-markdown li {
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
           .ai-message-markdown pre {
             background: #f8fafc !important; /* 更浅的背景 */

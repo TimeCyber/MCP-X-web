@@ -119,10 +119,35 @@ const inFlightImageLoads = new Map<string, Promise<HTMLImageElement | null>>();
 
 const IMAGE_LOAD_TIMEOUT_MS = 20000;
 
-const decodeImageFromSrc = (src: string): Promise<HTMLImageElement | null> =>
+// 限制同时进行的网络图片加载数量，避免一次性发起大量请求把浏览器连接池打满，
+// 导致前几张加载成功后剩余图片全部卡住不再加载。
+const MAX_CONCURRENT_NETWORK_LOADS = 4;
+let activeNetworkLoads = 0;
+const networkLoadQueue: Array<() => void> = [];
+
+const acquireNetworkSlot = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (activeNetworkLoads < MAX_CONCURRENT_NETWORK_LOADS) {
+      activeNetworkLoads++;
+      resolve();
+    } else {
+      networkLoadQueue.push(resolve);
+    }
+  });
+
+const releaseNetworkSlot = (): void => {
+  const next = networkLoadQueue.shift();
+  if (next) {
+    next();
+  } else {
+    activeNetworkLoads = Math.max(0, activeNetworkLoads - 1);
+  }
+};
+
+const decodeImageFromSrc = (src: string, useCrossOrigin = true): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (useCrossOrigin) img.crossOrigin = 'anonymous';
     const timer = window.setTimeout(() => {
       img.onload = null;
       img.onerror = null;
@@ -161,31 +186,42 @@ export const loadMediaImage = async (url: string): Promise<HTMLImageElement | nu
       return img;
     }
 
+    // 命中 IndexedDB 缓存（base64）时无需走网络，直接解码，不占用并发名额
     try {
       const cachedDataUrl = await getCachedMediaUrl(key);
-      let img = await decodeImageFromSrc(cachedDataUrl);
-      if (img) {
-        loadedImageCache.set(key, img);
-        if (cachedDataUrl !== key) loadedImageCache.set(cachedDataUrl, img);
-        return img;
+      if (cachedDataUrl !== key) {
+        const cachedImg = await decodeImageFromSrc(cachedDataUrl);
+        if (cachedImg) {
+          loadedImageCache.set(key, cachedImg);
+          loadedImageCache.set(cachedDataUrl, cachedImg);
+          return cachedImg;
+        }
       }
+    } catch { /* 忽略缓存读取异常，继续走网络 */ }
 
+    // 网络加载统一限制并发，避免一次性发起过多请求导致后续图片卡住
+    await acquireNetworkSlot();
+    try {
       const dataUrl = await cacheMediaUrl(key);
-      img = await decodeImageFromSrc(dataUrl);
+      let img = await decodeImageFromSrc(dataUrl);
       if (img) {
         loadedImageCache.set(key, img);
         if (dataUrl !== key) loadedImageCache.set(dataUrl, img);
         return img;
       }
 
-      img = await decodeImageFromSrc(key);
+      // 带跨域属性解码失败时，回退到不带 crossOrigin 再试一次，
+      // 保证不支持 CORS 的图片服务器也能正常显示。
+      img = await decodeImageFromSrc(key, false);
       if (img) loadedImageCache.set(key, img);
       return img;
     } catch (err) {
       console.warn('[mediaCache] loadMediaImage failed:', key, err);
-      const img = await decodeImageFromSrc(key);
+      const img = await decodeImageFromSrc(key, false);
       if (img) loadedImageCache.set(key, img);
       return img;
+    } finally {
+      releaseNetworkSlot();
     }
   })();
 
