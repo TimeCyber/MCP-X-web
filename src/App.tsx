@@ -3,9 +3,23 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import { ToastProvider } from './components/ui/Toast';
 import { LanguageProvider } from './contexts/LanguageContext';
+// 首页不走懒加载，避免刷新时出现长时间纯黑屏
+import CreatorHubPage from './pages/CreatorHubPage';
 
-// 路由级懒加载，每个页面单独分包，首屏只加载当前路由代码
-const CreatorHubPage      = lazy(() => import('./pages/CreatorHubPage'));
+const PageFallback = () => (
+  <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <div className="h-14 border-b border-gray-800/60 bg-[#0a0a0a]/90" />
+    <div className="px-4 pt-16 pb-10 max-w-5xl mx-auto space-y-8 animate-pulse">
+      <div className="h-10 w-2/3 max-w-md mx-auto bg-gray-800 rounded-lg" />
+      <div className="h-40 bg-[#1a1a1a] border border-gray-800 rounded-2xl" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-48 bg-[#1a1a1a] border border-gray-800 rounded-xl" />
+        ))}
+      </div>
+    </div>
+  </div>
+);
 const McpPage             = lazy(() => import('./pages/McpPage').then(m => ({ default: m.McpPage })));
 const ServerDetailPage    = lazy(() => import('./pages/ServerDetailPage').then(m => ({ default: m.ServerDetailPage })));
 const LoginPage           = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -42,7 +56,7 @@ function App() {
     <LanguageProvider>
       <ToastProvider>
         <Router>
-          <Suspense fallback={<div className="min-h-screen bg-black" />}>
+          <Suspense fallback={<PageFallback />}>
             <Routes>
               <Route path="/"                        element={<CreatorHubPage />} />
               <Route path="/mcp"                     element={<McpPage />} />

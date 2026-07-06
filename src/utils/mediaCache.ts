@@ -45,6 +45,39 @@ const idbPut = async (url: string, dataUrl: string): Promise<void> => {
   });
 };
 
+const FETCH_TIMEOUT_MS = 30000;
+
+/** 永久可缓存的 OSS 域名（后端转存后的 mcpx 桶） */
+const PERMANENT_MEDIA_HOSTS = ['mcpx.oss-cn-shanghai.aliyuncs.com'];
+
+/** 是否为后端转存后的永久媒体 URL */
+export const isPermanentMediaUrl = (url: string): boolean => {
+  if (!url) return false;
+  if (url.startsWith('data:') || url.startsWith('blob:')) return true;
+  if (!url.startsWith('http')) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return PERMANENT_MEDIA_HOSTS.some((h) => hostname === h);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * 是否为会过期的临时 URL（volces TOS、DashScope 结果桶等），不应写入 localStorage / IndexedDB 预缓存
+ */
+export const isTemporaryMediaUrl = (url: string): boolean => {
+  if (!url || !url.startsWith('http')) return false;
+  return !isPermanentMediaUrl(url);
+};
+
+const fetchWithTimeout = (url: string): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, { mode: 'cors', credentials: 'omit', signal: controller.signal })
+    .finally(() => window.clearTimeout(timer));
+};
+
 /**
  * 将 http/https URL 的媒体资源缓存到 IndexedDB，返回 base64 data URL。
  * - 已是 base64 / data: 开头：直接返回
@@ -61,8 +94,11 @@ export const cacheMediaUrl = async (url: string): Promise<string> => {
       return cached.dataUrl;
     }
 
-    const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
-    if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) {
+      // 403 等失败响应不写入缓存，避免持久化无效数据
+      throw new Error(`fetch failed: ${response.status}`);
+    }
     const blob = await response.blob();
 
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -95,27 +131,12 @@ export const getCachedMediaUrl = async (url: string): Promise<string> => {
   return url;
 };
 
-/**
- * 批量预缓存 URL 列表（后台静默执行，不阻塞主流程）
- */
-export const prefetchMediaUrls = (urls: string[]): void => {
-  const httpUrls = urls.filter(u => u && u.startsWith('http'));
-  if (httpUrls.length === 0) return;
-  // 串行缓存，避免并发过多
-  (async () => {
-    for (const url of httpUrls) {
-      try { await cacheMediaUrl(url); } catch { /* ignore */ }
-    }
-  })();
-};
-
-/**
- * 清理过期缓存（可在应用启动时调用一次）
- */
 /** 已成功解码的 Image（按原始 href 去重） */
 const loadedImageCache = new Map<string, HTMLImageElement>();
 /** 进行中的加载（同一 URL 只发起一次请求） */
 const inFlightImageLoads = new Map<string, Promise<HTMLImageElement | null>>();
+/** 已调度预加载的 URL，避免重复触发 */
+const scheduledPrefetch = new Set<string>();
 
 const IMAGE_LOAD_TIMEOUT_MS = 20000;
 
@@ -202,6 +223,14 @@ export const loadMediaImage = async (url: string): Promise<HTMLImageElement | nu
     // 网络加载统一限制并发，避免一次性发起过多请求导致后续图片卡住
     await acquireNetworkSlot();
     try {
+      // 第三方临时 URL（DashScope / volces 等）不做 fetch 转存，仅尝试直接解码
+      if (isTemporaryMediaUrl(key)) {
+        let img = await decodeImageFromSrc(key);
+        if (!img) img = await decodeImageFromSrc(key, false);
+        if (img) loadedImageCache.set(key, img);
+        return img;
+      }
+
       const dataUrl = await cacheMediaUrl(key);
       let img = await decodeImageFromSrc(dataUrl);
       if (img) {
@@ -230,6 +259,21 @@ export const loadMediaImage = async (url: string): Promise<HTMLImageElement | nu
     return await task;
   } finally {
     inFlightImageLoads.delete(key);
+  }
+};
+
+/**
+ * 批量预缓存 URL 列表（后台静默执行，不阻塞主流程）
+ * 复用 loadMediaImage 的并发控制与去重，避免与画布加载争抢连接
+ */
+export const prefetchMediaUrls = (urls: string[]): void => {
+  const unique = [...new Set(urls.filter(u => u && u.startsWith('http') && !isTemporaryMediaUrl(u)))];
+  for (const url of unique) {
+    if (scheduledPrefetch.has(url)) continue;
+    scheduledPrefetch.add(url);
+    loadMediaImage(url)
+      .catch(() => {})
+      .finally(() => { scheduledPrefetch.delete(url); });
   }
 };
 

@@ -28,6 +28,8 @@ import { showcaseApi, ShowcaseCategory, ShowcaseContent } from '../services/show
 import { useLanguage } from '../contexts/LanguageContext';
 import { toast } from '../utils/toast';
 import { createApp } from '../services/appBuildApi';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // 判断 thumbnailUrl 是否为有效图片 URL（排除 "default"、空值等无效值）
 const isValidThumbnail = (url?: string | null): boolean => {
@@ -35,6 +37,34 @@ const isValidThumbnail = (url?: string | null): boolean => {
   const trimmed = url.trim().toLowerCase();
   if (trimmed === 'default' || trimmed === 'null' || trimmed === 'undefined' || trimmed === '') return false;
   return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+};
+
+const stripMarkdown = (text: string): string =>
+  text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]+`/g, '')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/---+/g, '')
+    .trim();
+
+const getTextPreview = (text?: string, maxLen = 120): string => {
+  if (!text) return '';
+  const plain = stripMarkdown(text).replace(/\n+/g, ' ');
+  return plain.length > maxLen ? `${plain.slice(0, maxLen)}…` : plain;
+};
+
+const parsePromptImages = (prompt: string) => {
+  const imageUrlRegex = /https?:\/\/[^\s,]+\.(?:jpg|jpeg|png|gif|webp)/gi;
+  const urls = prompt.match(imageUrlRegex) || [];
+  const textWithoutUrls = prompt
+    .replace(imageUrlRegex, '')
+    .replace(/输入图片:\s*,?\s*/g, '')
+    .replace(/,\s*,/g, ',')
+    .trim();
+  return { urls, text: textWithoutUrls };
 };
 
 // 功能类型定义
@@ -54,6 +84,62 @@ const VALID_IMAGE_RESOLUTIONS = new Set<ImageResolution>(['1K', '2K', '4K']);
 type VideoGenDuration = '5秒' | '10秒' | '15秒';
 const VALID_VIDEO_GEN_DURATIONS = new Set<VideoGenDuration>(['5秒', '10秒', '15秒']);
 const VALID_IMAGE_RATIOS = new Set<ImageRatio>(['16:9', '9:16', '1:1', '4:3', '3:4']);
+
+const SHOWCASE_CACHE_KEY = 'creatorHub_showcase_cache';
+const CATEGORIES_CACHE_KEY = 'creatorHub_categories_cache';
+
+const loadShowcaseCache = (): { list: ShowcaseContent[]; total: number } => {
+  try {
+    const raw = sessionStorage.getItem(SHOWCASE_CACHE_KEY);
+    if (!raw) return { list: [], total: 0 };
+    const parsed = JSON.parse(raw);
+    return { list: parsed.list || [], total: parsed.total || 0 };
+  } catch {
+    return { list: [], total: 0 };
+  }
+};
+
+const saveShowcaseCache = (list: ShowcaseContent[], total: number): void => {
+  try {
+    sessionStorage.setItem(SHOWCASE_CACHE_KEY, JSON.stringify({ list, total, cachedAt: Date.now() }));
+  } catch { /* ignore */ }
+};
+
+const loadCategoriesCache = (): ShowcaseCategory[] => {
+  try {
+    const raw = sessionStorage.getItem(CATEGORIES_CACHE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveCategoriesCache = (categories: ShowcaseCategory[]): void => {
+  try {
+    sessionStorage.setItem(CATEGORIES_CACHE_KEY, JSON.stringify(categories));
+  } catch { /* ignore */ }
+};
+
+const ShowcaseSkeletonGrid: React.FC<{ colCount: number }> = ({ colCount }) => (
+  <div className="flex gap-4 lg:gap-6 items-start w-full min-w-0">
+    {Array.from({ length: colCount }).map((_, colIdx) => (
+      <div key={colIdx} className="flex-1 min-w-0 flex flex-col gap-4 lg:gap-6">
+        {Array.from({ length: colIdx === 0 ? 3 : 2 }).map((__, rowIdx) => (
+          <div
+            key={rowIdx}
+            className="bg-[#1a1a1a] rounded-xl border border-gray-800 overflow-hidden animate-pulse"
+          >
+            <div className="aspect-[4/3] bg-gray-800" />
+            <div className="p-4 space-y-3">
+              <div className="h-4 bg-gray-800 rounded w-3/4" />
+              <div className="h-3 bg-gray-800/80 rounded w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    ))}
+  </div>
+);
 
 const loadCachedVideoRatio = (): VideoRatio => {
   try {
@@ -312,11 +398,28 @@ const VideoThumbnail: React.FC<{
   className?: string;
 }> = ({ videoUrl, className = '' }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // 仅当接近视口时才下载视频截取首帧，避免首屏同时下载多个视频
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setInView(true);
+        io.disconnect();
+      }
+    }, { rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!inView) return;
     if (!videoUrl) {
       setError(true);
       setLoading(false);
@@ -384,20 +487,20 @@ const VideoThumbnail: React.FC<{
       clearTimeout(timeoutId);
       video.remove();
     };
-  }, [videoUrl]);
+  }, [inView, videoUrl]);
 
   if (!videoUrl || error) {
     return (
-      <div className={`flex items-center justify-center bg-gray-800 ${className}`}>
+      <div ref={containerRef} className={`flex items-center justify-center bg-gray-800 ${className}`}>
         <Video className="w-12 h-12 text-gray-600" />
       </div>
     );
   }
 
-  // 加载中
+  // 加载中（含未进入视口的占位）
   if (loading) {
     return (
-      <div className={`flex items-center justify-center bg-gray-800 ${className}`}>
+      <div ref={containerRef} className={`flex items-center justify-center bg-gray-800 ${className}`}>
         <div className="w-6 h-6 border-2 border-gray-600 border-t-orange-500 rounded-full animate-spin" />
       </div>
     );
@@ -520,23 +623,41 @@ const ShowcaseCard: React.FC<{
   currentLanguage: string;
   onClick: () => void;
 }> = ({ item, currentLanguage, onClick }) => {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
   const [ready, setReady] = useState(false);
 
-  // 判断该卡片是否有需要等待加载的图片
+  // 判断该卡片是否有需要等待加载的图片（文本类型不使用缩略图）
   const getImageSrc = (): string | null => {
+    if (item.contentType === 'text') return null;
     if (item.contentType === 'image') {
       return item.thumbnailUrl || item.generatedResult || null;
     }
     if (item.contentType === 'video' || item.contentType === 'longvideo' || item.contentType === 'app') {
       return isValidThumbnail(item.thumbnailUrl) ? item.thumbnailUrl! : null;
     }
-    return item.thumbnailUrl || null;
+    return isValidThumbnail(item.thumbnailUrl) ? item.thumbnailUrl! : null;
   };
 
   const imageSrc = getImageSrc();
 
-  // 无图片内容（文案、视频无封面等）直接显示
+  // 仅当卡片接近视口时才加载图片，避免首屏一次性发起大量图片/视频请求
   useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setInView(true);
+        io.disconnect();
+      }
+    }, { rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // 进入视口后再预加载缩略图；无图片内容直接显示
+  useEffect(() => {
+    if (!inView) return;
     if (!imageSrc) {
       setReady(true);
       return;
@@ -545,22 +666,25 @@ const ShowcaseCard: React.FC<{
     img.onload = () => setReady(true);
     img.onerror = () => setReady(true); // 加载失败也显示（会走 fallback）
     img.src = imageSrc;
-  }, [imageSrc]);
+  }, [inView, imageSrc]);
 
   return (
     <div
-      className={`bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer ${
-        ready ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-      }`}
-      style={{ transition: 'opacity 0.3s ease, transform 0.3s ease' }}
+      ref={cardRef}
+      className="bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group cursor-pointer"
       onClick={onClick}
     >
       {/* 缩略图 */}
       <div className="bg-gray-900 relative overflow-hidden">
+        {imageSrc && !ready && (
+          <div className="w-full aspect-[4/3] bg-gray-800 animate-pulse" />
+        )}
+        {(!imageSrc || ready) && (
+        <>
         {item.contentType === 'video' ? (
           <>
             {isValidThumbnail(item.thumbnailUrl) ? (
-              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              <img src={item.thumbnailUrl} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             ) : item.generatedResult ? (
               (() => {
                 const videoUrlRegex = /(https?:\/\/[^\s]+\.(?:mp4|webm|mov|avi|mkv))/i;
@@ -580,14 +704,14 @@ const ShowcaseCard: React.FC<{
         ) : item.contentType === 'longvideo' ? (
           <>
             {isValidThumbnail(item.thumbnailUrl) ? (
-              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              <img src={item.thumbnailUrl} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             ) : (() => {
               try {
                 const projectData = JSON.parse(item.generatedResult || '{}');
                 const shots = projectData.shots || [];
                 const firstShot = shots.find((s: any) => s.keyframes?.find((kf: any) => kf.type === 'start' && kf.imageUrl));
                 const imageUrl = firstShot?.keyframes?.find((kf: any) => kf.type === 'start')?.imageUrl;
-                if (imageUrl) return <img src={imageUrl} alt={item.title} className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300" />;
+                if (imageUrl) return <img src={imageUrl} alt={item.title} loading="lazy" decoding="async" className="w-full aspect-video object-cover group-hover:scale-105 transition-transform duration-300" />;
               } catch {}
               return <div className="w-full aspect-video flex items-center justify-center text-gray-600"><Film className="w-12 h-12" /></div>;
             })()}
@@ -601,7 +725,7 @@ const ShowcaseCard: React.FC<{
         ) : item.contentType === 'app' ? (
           <>
             {isValidThumbnail(item.thumbnailUrl) ? (
-              <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+              <img src={item.thumbnailUrl} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             ) : (
               <div className="w-full aspect-video flex items-center justify-center bg-gradient-to-br from-green-900/40 to-emerald-900/40 text-green-400"><Globe className="w-12 h-12" /></div>
             )}
@@ -611,15 +735,32 @@ const ShowcaseCard: React.FC<{
           </>
         ) : item.contentType === 'image' ? (
           item.thumbnailUrl ? (
-            <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+            <img src={item.thumbnailUrl} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
           ) : item.generatedResult ? (
-            <img src={item.generatedResult} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+            <img src={item.generatedResult} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
           ) : (
             <div className="w-full aspect-square flex items-center justify-center text-gray-600"><Image className="w-12 h-12" /></div>
           )
+        ) : item.contentType === 'text' ? (
+          <div className="w-full aspect-[4/3] flex flex-col justify-between p-4 bg-gradient-to-br from-blue-950/40 via-gray-900 to-gray-950">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center">
+                <MessageSquare className="w-4 h-4 text-blue-400" />
+              </div>
+              <span className="text-[10px] text-blue-400/80 font-medium">
+                {currentLanguage === 'zh' ? '文本对话' : 'Text Chat'}
+              </span>
+            </div>
+            <p className="text-xs leading-relaxed text-gray-400 line-clamp-5 flex-1 my-3">
+              {getTextPreview(item.generatedResult) || item.title}
+            </p>
+            {item.aiModel && (
+              <span className="text-[10px] text-orange-400/90 font-mono truncate">{item.aiModel}</span>
+            )}
+          </div>
         ) : (
-          item.thumbnailUrl ? (
-            <img src={item.thumbnailUrl} alt={item.title} className="w-full h-auto group-hover:scale-105 transition-transform duration-300" />
+          isValidThumbnail(item.thumbnailUrl) ? (
+            <img src={item.thumbnailUrl} alt={item.title} loading="lazy" decoding="async" className="w-full h-auto group-hover:scale-105 transition-transform duration-300" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ) : (
             <div className="w-full aspect-video flex items-center justify-center text-gray-600"><MessageSquare className="w-12 h-12" /></div>
           )
@@ -628,6 +769,8 @@ const ShowcaseCard: React.FC<{
           <div className="absolute top-2 right-2 px-2 py-1 bg-orange-500 text-white text-xs font-bold rounded z-20">
             {currentLanguage === 'zh' ? '推荐' : 'Featured'}
           </div>
+        )}
+        </>
         )}
       </div>
       {/* 信息 */}
@@ -786,13 +929,14 @@ export const CreatorHubPage: React.FC = () => {
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Showcase 相关状态
-  const [categories, setCategories] = useState<ShowcaseCategory[]>([]);
+  // Showcase 相关状态（优先读 session 缓存，刷新时立即显示上次内容）
+  const cachedShowcase = loadShowcaseCache();
+  const [categories, setCategories] = useState<ShowcaseCategory[]>(() => loadCategoriesCache());
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
-  const [showcaseList, setShowcaseList] = useState<ShowcaseContent[]>([]);
-  const [showcaseLoading, setShowcaseLoading] = useState(false);
+  const [showcaseList, setShowcaseList] = useState<ShowcaseContent[]>(() => cachedShowcase.list);
+  const [showcaseLoading, setShowcaseLoading] = useState(() => cachedShowcase.list.length === 0);
   const [showcasePage, setShowcasePage] = useState(1);
-  const [showcaseTotal, setShowcaseTotal] = useState(0);
+  const [showcaseTotal, setShowcaseTotal] = useState(() => cachedShowcase.total);
 
   // 响应式列数：监听窗口宽度变化
   const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1280);
@@ -802,7 +946,7 @@ export const CreatorHubPage: React.FC = () => {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const colCount = windowWidth < 1024 ? 2 : 4;
-  const showcasePageSize = 50;
+  const showcasePageSize = 24;
   const [selectedShowcase, setSelectedShowcase] = useState<ShowcaseContent | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [isCreatingSimilar, setIsCreatingSimilar] = useState(false);
@@ -905,6 +1049,7 @@ export const CreatorHubPage: React.FC = () => {
       const response = await showcaseApi.getCategoryList({ status: '0' });
       if (response.code === 200 && response.rows) {
         setCategories(response.rows);
+        saveCategoriesCache(response.rows);
       }
     } catch (error) {
       console.error('Failed to load categories:', error);
@@ -933,11 +1078,15 @@ export const CreatorHubPage: React.FC = () => {
       const response = await showcaseApi.getShowcaseList(params);
       if (response.code === 200) {
         if (append) {
-          // 追加模式：将新数据添加到现有列表后面
-          setShowcaseList(prev => [...prev, ...(response.rows || [])]);
+          setShowcaseList(prev => {
+            const merged = [...prev, ...(response.rows || [])];
+            saveShowcaseCache(merged, response.total || 0);
+            return merged;
+          });
         } else {
-          // 替换模式：用于切换分类时
-          setShowcaseList(response.rows || []);
+          const rows = response.rows || [];
+          setShowcaseList(rows);
+          saveShowcaseCache(rows, response.total || 0);
         }
         setShowcaseTotal(response.total || 0);
         setShowcasePage(page);
@@ -1394,11 +1543,10 @@ export const CreatorHubPage: React.FC = () => {
           }}
         />
 
-        {/* 视频背景 */}
+        {/* 视频背景：仅在视频模式下挂载，避免首屏下载 hero.mp4 */}
+        {selectedType === 'video' && (
         <video
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${
-            selectedType === 'video' ? 'opacity-40' : 'opacity-0'
-          }`}
+          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500 opacity-40"
           style={{
             maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0) 100%)',
@@ -1408,11 +1556,13 @@ export const CreatorHubPage: React.FC = () => {
           loop
           muted
           playsInline
+          preload="metadata"
           onLoadedData={() => setBackgroundLoaded(true)}
           onError={() => setBackgroundLoaded(true)}
         >
           <source src="/images/hero.mp4" type="video/mp4" />
         </video>
+        )}
       </div>
 
       <main className="flex-grow flex flex-col items-center justify-center px-4 py-12 lg:py-20 relative z-10">
@@ -1893,10 +2043,8 @@ export const CreatorHubPage: React.FC = () => {
           </div>
 
           {/* 内容网格 */}
-          {showcaseLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
-            </div>
+          {showcaseLoading && showcaseList.length === 0 ? (
+            <ShowcaseSkeletonGrid colCount={colCount} />
           ) : showcaseList.length === 0 ? (
             <div className="text-center py-20 text-gray-500">
               {currentLanguage === 'zh' ? '暂无内容' : 'No content'}
@@ -2001,42 +2149,122 @@ export const CreatorHubPage: React.FC = () => {
               </button>
             </div>
 
-            {/* 内容区域 - 统一左右布局 */}
+            {/* 内容区域 */}
             <div className="flex-1 overflow-y-auto p-4 lg:p-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-                {/* 左侧：内容展示 */}
-                <div className="space-y-4">
-                  {/* 文案类型 */}
-                  {selectedShowcase.contentType === 'text' && (
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
-                          <Bot className="w-4 h-4 text-orange-400" />
-                        </div>
-                        <span className="text-sm font-medium text-gray-400">
-                          {currentLanguage === 'zh' ? 'AI 生成内容' : 'AI Generated Content'}
-                        </span>
-                        {selectedShowcase.aiModel && (
-                          <span className="text-xs text-orange-400 bg-orange-500/10 px-2 py-1 rounded">
-                            {selectedShowcase.aiModel}
-                          </span>
+              {selectedShowcase.contentType === 'text' ? (() => {
+                const { urls: promptImageUrls, text: promptText } = parsePromptImages(selectedShowcase.originalPrompt || '');
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 min-w-0">
+                      <div className="bg-gray-950/60 rounded-xl border border-gray-800 p-4 lg:p-6 space-y-5 max-h-[65vh] overflow-y-auto min-w-0">
+                        {promptText && (
+                          <div className="flex justify-end min-w-0">
+                            <div className="min-w-0 max-w-[88%]">
+                              <div className="text-[10px] text-gray-500 mb-1.5 text-right px-1">
+                                {currentLanguage === 'zh' ? '用户' : 'You'}
+                              </div>
+                              <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                {promptText}
+                              </div>
+                            </div>
+                          </div>
                         )}
-                      </div>
-                      <div className="bg-gray-900/50 rounded-lg p-4 text-gray-300 whitespace-pre-wrap overflow-y-auto" style={{ minHeight: '5.5rem', maxHeight: '24rem' }}>
-                        {selectedShowcase.generatedResult && /^https?:\/\/.*\.(jpg|jpeg|png|gif|bmp|webp|svg)/i.test(selectedShowcase.generatedResult) ? (
-                          <img
-                            src={selectedShowcase.generatedResult}
-                            alt="Generated content"
-                            className="max-w-full h-auto rounded"
-                          />
-                        ) : (
-                          selectedShowcase.generatedResult
+                        {promptImageUrls.length > 0 && (
+                          <div className="flex justify-end gap-2 flex-wrap">
+                            {promptImageUrls.map((url, idx) => (
+                              <div key={idx} className="w-20 h-20 rounded-lg overflow-hidden border border-gray-700">
+                                <img src={url} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {selectedShowcase.generatedResult && (
+                          <div className="flex justify-start gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center shrink-0 mt-1">
+                              <Bot className="w-4 h-4 text-orange-400" />
+                            </div>
+                            <div className="min-w-0 max-w-[calc(100%-2.75rem)]">
+                              <div className="flex items-center gap-2 mb-1.5 px-1">
+                                <span className="text-[10px] text-gray-500">
+                                  {currentLanguage === 'zh' ? 'AI 助手' : 'AI Assistant'}
+                                </span>
+                                {selectedShowcase.aiModel && (
+                                  <span className="text-[10px] text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded font-mono">
+                                    {selectedShowcase.aiModel}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="bg-gray-800/80 border border-gray-700 rounded-2xl rounded-tl-sm px-4 py-3 text-gray-200 text-sm min-w-0 overflow-hidden">
+                                <div className="showcase-chat-markdown prose prose-sm prose-invert max-w-none break-words">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {selectedShowcase.generatedResult}
+                                  </ReactMarkdown>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
-                  )}
-
-                  {/* 图片类型 */}
+                    <div className="space-y-4">
+                      {selectedShowcase.aiModel && (
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Zap className="w-4 h-4 text-orange-400" />
+                            <span className="text-sm font-medium text-gray-400">
+                              {currentLanguage === 'zh' ? 'AI 模型' : 'AI Model'}
+                            </span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-gray-300 text-sm font-mono">
+                            {selectedShowcase.aiModel}
+                          </div>
+                        </div>
+                      )}
+                      {selectedShowcase.generationParams && (() => {
+                        try {
+                          const params = JSON.parse(selectedShowcase.generationParams);
+                          const cost = params.deductCost || '0.0';
+                          return (
+                            <div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Zap className="w-4 h-4 text-green-400" />
+                                <span className="text-sm font-medium text-gray-400">
+                                  {currentLanguage === 'zh' ? '花费' : 'Cost'}
+                                </span>
+                              </div>
+                              <div className="bg-gray-900/50 rounded-lg p-3 text-gray-300 text-sm">
+                                <span className="text-green-400 font-mono text-lg">{cost}</span>
+                                <span className="text-gray-500 ml-1">{currentLanguage === 'zh' ? '积分' : 'Credits'}</span>
+                              </div>
+                            </div>
+                          );
+                        } catch {
+                          return null;
+                        }
+                      })()}
+                      {selectedShowcase.tags && (
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-medium text-gray-400">
+                              {currentLanguage === 'zh' ? '标签' : 'Tags'}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedShowcase.tags.split(',').map((tag, idx) => (
+                              <span key={idx} className="px-3 py-1 bg-gray-800 text-gray-300 text-xs rounded-full">
+                                {tag.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })() : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                {/* 左侧：内容展示 */}
+                <div className="space-y-4">
                   {selectedShowcase.contentType === 'image' && (
                     <div className="space-y-3">
                       <div className="bg-gray-900 rounded-lg overflow-hidden">
@@ -2210,21 +2438,12 @@ export const CreatorHubPage: React.FC = () => {
                 <div className="space-y-4">
                   {/* Prompt */}
                   {selectedShowcase.originalPrompt && (() => {
-                    // 解析提示词中的图片链接
-                    const parsePromptImages = (prompt: string) => {
-                      const imageUrlRegex = /https?:\/\/[^\s,]+\.(?:jpg|jpeg|png|gif|webp)/gi;
-                      const urls = prompt.match(imageUrlRegex) || [];
-                      const textWithoutUrls = prompt.replace(imageUrlRegex, '').replace(/输入图片:\s*,?\s*/g, '').replace(/,\s*,/g, ',').trim();
-                      return { urls, text: textWithoutUrls };
-                    };
-
                     const { urls: imageUrls, text: promptText } = parsePromptImages(selectedShowcase.originalPrompt);
 
                     return (
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2 mb-3">
                           <MessageSquare className={`w-4 h-4 ${
-                            selectedShowcase.contentType === 'text' ? 'text-blue-400' :
                             selectedShowcase.contentType === 'image' ? 'text-purple-400' :
                             'text-pink-400'
                           }`} />
@@ -2290,7 +2509,7 @@ export const CreatorHubPage: React.FC = () => {
                   })()}
 
                   {/* AI 模型信息 */}
-                  {selectedShowcase.aiModel && selectedShowcase.contentType !== 'text' && (
+                  {selectedShowcase.aiModel && (
                     <div>
                       <div className="flex items-center gap-2 mb-2">
                         <Zap className="w-4 h-4 text-orange-400" />
@@ -2351,6 +2570,7 @@ export const CreatorHubPage: React.FC = () => {
                   )}
                 </div>
               </div>
+              )}
             </div>
 
             {/* 底部操作栏 */}

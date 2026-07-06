@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Navbar } from '../components/layout/Navbar';
 import { Footer } from '../components/layout/Footer';
 import { Github } from 'lucide-react';
@@ -7,17 +7,28 @@ import api from '../services/api';
 import { toast } from '../utils/toast';
 import { useLanguage } from '../contexts/LanguageContext';
 
+type LoginMode = 'password' | 'sms';
+
+const PHONE_REGEX = /^1[3-9]\d{9}$/;
+
 export const LoginPage: React.FC = () => {
   const { t, currentLanguage } = useLanguage();
+  const [loginMode, setLoginMode] = useState<LoginMode>('password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
+  const [smsCode, setSmsCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const inviteCode = searchParams.get('code') || '';
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 从localStorage加载保存的登录信息
   useEffect(() => {
     const savedUsername = localStorage.getItem('savedUsername');
     const savedPassword = localStorage.getItem('savedPassword');
@@ -30,10 +41,70 @@ export const LoginPage: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
+    };
+  }, []);
+
+  const startCountdown = () => {
+    setCountdown(60);
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+    }
+    countdownTimerRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          if (countdownTimerRef.current) {
+            clearInterval(countdownTimerRef.current);
+            countdownTimerRef.current = null;
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleLoginSuccess = (res: any) => {
+    const token = res.data?.access_token || res.data?.token || res.token;
+    const userInfo = res.data?.userInfo;
+
+    if (token) {
+      localStorage.setItem('token', token);
+    }
+
+    if (userInfo) {
+      if (userInfo.userId) {
+        localStorage.setItem('userId', userInfo.userId);
+      }
+      if (userInfo.nickName) {
+        localStorage.setItem('nickname', userInfo.nickName);
+      }
+      if (userInfo.username) {
+        localStorage.setItem('username', userInfo.username);
+      }
+      if (userInfo.rolePermission && userInfo.rolePermission.length > 0) {
+        localStorage.setItem('userRole', userInfo.rolePermission[0]);
+      }
+    }
+
+    toast.success(t('login.loginSuccess'));
+
+    const from = (location.state as any)?.from?.pathname;
+    if (!from || from === '/signup' || from === '/forgot-password') {
+      navigate('/', { replace: true });
+    } else {
+      navigate(from, { replace: true });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    // 邮箱格式校验
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(username.trim())) {
       setError(currentLanguage === 'zh' ? '请输入正确的邮箱地址' : 'Please enter a valid email address');
@@ -42,50 +113,9 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      // 使用新的ruoyi-element-ai项目的登录接口
       const res = await api.user.login(username, password);
-      console.log('登录API响应:', res);
-      
+
       if (res && res.code === 200) {
-        // 处理新的响应格式
-        const token = res.data?.access_token || res.data?.token || res.token;
-        const userInfo = res.data?.userInfo;
-        
-        console.log('提取的token:', token);
-        console.log('提取的userInfo:', userInfo);
-        
-        if (token) {
-          localStorage.setItem('token', token);
-          console.log('已保存token到localStorage');
-        }
-        
-        if (userInfo) {
-          // 保存用户ID - userInfo.userId 已经是字符串类型
-          if (userInfo.userId) {
-            localStorage.setItem('userId', userInfo.userId);
-            console.log('已保存userId到localStorage:', userInfo.userId);
-          }
-          
-          // 保存其他用户信息
-          if (userInfo.nickName) {
-            localStorage.setItem('nickname', userInfo.nickName);
-        }
-          if (userInfo.username) {
-            localStorage.setItem('username', userInfo.username);
-          }
-          
-          // 保存用户角色信息
-          if (userInfo.rolePermission && userInfo.rolePermission.length > 0) {
-            localStorage.setItem('userRole', userInfo.rolePermission[0]);
-          }
-        }
-        
-        console.log('localStorage更新后的内容:');
-        console.log('- token:', localStorage.getItem('token'));
-        console.log('- userId:', localStorage.getItem('userId'));
-        console.log('- username:', localStorage.getItem('username'));
-        
-        // 处理"记住我"功能
         if (rememberMe) {
           localStorage.setItem('savedUsername', username);
           localStorage.setItem('savedPassword', password);
@@ -96,21 +126,7 @@ export const LoginPage: React.FC = () => {
           localStorage.removeItem('rememberMe');
         }
 
-        toast.success(t('login.loginSuccess'));
-        
-        // 获取来源页面
-        const from = (location.state as any)?.from?.pathname;
-        console.log('location.state:', location.state);
-        console.log('跳转目标 from:', from);
-        
-        // 如果来源页面是注册或忘记密码页面，则跳转到首页
-        if (!from || from === '/signup' || from === '/forgot-password') {
-          console.log('准备跳转到首页 /');
-          navigate('/', { replace: true });
-        } else {
-          console.log('准备跳转到来源页面:', from);
-          navigate(from, { replace: true });
-        }
+        handleLoginSuccess(res);
       } else {
         setError(res?.msg || res?.message || t('login.loginFailed'));
       }
@@ -122,10 +138,70 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  // GitHub登录处理
+  const handleSendSmsCode = async () => {
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone) {
+      setError(currentLanguage === 'zh' ? '请输入手机号' : 'Please enter phone number');
+      return;
+    }
+    if (!PHONE_REGEX.test(trimmedPhone)) {
+      setError(t('login.invalidPhone'));
+      return;
+    }
+
+    setSendingCode(true);
+    setError('');
+
+    try {
+      const res = await api.user.smsCode(trimmedPhone);
+      if (res && res.code === 200) {
+        toast.success(t('login.codeSent'));
+        startCountdown();
+      } else {
+        setError(res?.msg || res?.message || t('login.sendCodeFailed'));
+      }
+    } catch (err: any) {
+      console.error('发送验证码错误:', err);
+      setError(err?.response?.data?.msg || err?.message || t('login.sendCodeFailed'));
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
+  const handleSmsLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    const trimmedPhone = phone.trim();
+    if (!PHONE_REGEX.test(trimmedPhone)) {
+      setError(t('login.invalidPhone'));
+      return;
+    }
+    if (!smsCode.trim()) {
+      setError(currentLanguage === 'zh' ? '请输入验证码' : 'Please enter verification code');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const res = await api.user.smsLogin(trimmedPhone, smsCode.trim(), inviteCode || undefined);
+
+      if (res && res.code === 200) {
+        handleLoginSuccess(res);
+      } else {
+        setError(res?.msg || res?.message || t('login.loginFailed'));
+      }
+    } catch (err: any) {
+      console.error('手机验证码登录错误:', err);
+      setError(err?.response?.data?.msg || err?.message || t('login.loginError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGithubLogin = () => {
     try {
-      // 检查用户是否已经登录
       const existingToken = localStorage.getItem('token');
       if (existingToken) {
         toast.success(t('login.alreadyLoggedIn'));
@@ -134,9 +210,6 @@ export const LoginPage: React.FC = () => {
       }
 
       const githubAuthUrl = api.user.getGithubAuthUrl();
-      console.log('GitHub授权URL:', githubAuthUrl);
-      
-      // 打开GitHub授权页面
       window.location.href = githubAuthUrl;
     } catch (error) {
       console.error('GitHub登录错误:', error);
@@ -161,68 +234,163 @@ export const LoginPage: React.FC = () => {
                 {error}
               </div>
             )}
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-1">
-                    {t('login.username')}
-                  </label>
-                  <input
-                    type="text"
-                    id="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
-                    placeholder={currentLanguage === 'zh' ? '请输入邮箱地址' : 'Please enter email address'}
-                    required
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    {currentLanguage === 'zh' ? '请填写有效的邮箱地址作为用户名' : 'Use a valid email as your username.'}
-                  </p>
-                </div>
-                
-                <div>
-                  <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-1">
-                    {t('login.password')}
-                  </label>
-                  <input
-                    type="password"
-                    id="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
-                    placeholder={t('login.passwordPlaceholder')}
-                    required
-                  />
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="remember"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-700 bg-gray-800 text-orange-500 focus:ring-orange-500"
-                    />
-                    <label htmlFor="remember" className="ml-2 text-sm text-gray-300">
-                      {t('login.rememberMe')}
+
+            <div className="flex mb-6 bg-gray-800 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => { setLoginMode('password'); setError(''); }}
+                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                  loginMode === 'password'
+                    ? 'bg-orange-500 text-black'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {t('login.passwordLogin')}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setLoginMode('sms'); setError(''); }}
+                className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                  loginMode === 'sms'
+                    ? 'bg-orange-500 text-black'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {t('login.smsLogin')}
+              </button>
+            </div>
+
+            {loginMode === 'password' ? (
+              <form onSubmit={handleSubmit}>
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-1">
+                      {t('login.username')}
                     </label>
+                    <input
+                      type="text"
+                      id="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
+                      placeholder={currentLanguage === 'zh' ? '请输入邮箱地址' : 'Please enter email address'}
+                      required
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {currentLanguage === 'zh' ? '请填写有效的邮箱地址作为用户名' : 'Use a valid email as your username.'}
+                    </p>
                   </div>
-                  <Link to="/forgot-password" className="text-sm text-orange-500 hover:text-orange-400">
-                    {t('login.forgotPassword')}
-                  </Link>
+                  
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-1">
+                      {t('login.password')}
+                    </label>
+                    <input
+                      type="password"
+                      id="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
+                      placeholder={t('login.passwordPlaceholder')}
+                      required
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="remember"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-700 bg-gray-800 text-orange-500 focus:ring-orange-500"
+                      />
+                      <label htmlFor="remember" className="ml-2 text-sm text-gray-300">
+                        {t('login.rememberMe')}
+                      </label>
+                    </div>
+                    <Link to="/forgot-password" className="text-sm text-orange-500 hover:text-orange-400">
+                      {t('login.forgotPassword')}
+                    </Link>
+                  </div>
+                  
+                  <button
+                    type="submit"
+                    className={`w-full bg-orange-500 text-black font-medium rounded-lg px-4 py-2.5 hover:bg-orange-600 transition-colors ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    disabled={loading}
+                  >
+                    {loading ? t('login.loggingIn') : t('login.loginButton')}
+                  </button>
                 </div>
-                
-                <button
-                  type="submit"
-                  className={`w-full bg-orange-500 text-black font-medium rounded-lg px-4 py-2.5 hover:bg-orange-600 transition-colors ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
-                  disabled={loading}
-                >
-                  {loading ? t('login.loggingIn') : t('login.loginButton')}
-                </button>
-              </div>
-            </form>
+              </form>
+            ) : (
+              <form onSubmit={handleSmsLogin}>
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="phone" className="block text-sm font-medium text-gray-300 mb-1">
+                      {t('login.phone')}
+                    </label>
+                    <input
+                      type="tel"
+                      id="phone"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
+                      placeholder={t('login.phonePlaceholder')}
+                      maxLength={11}
+                      required
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {t('login.phoneHint')}
+                    </p>
+                    <p className="mt-1 text-xs text-orange-400/90">
+                      {t('login.smsAutoRegisterHint')}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label htmlFor="smsCode" className="block text-sm font-medium text-gray-300 mb-1">
+                      {t('login.verificationCode')}
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        id="smsCode"
+                        value={smsCode}
+                        onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-400 focus:outline-none focus:border-orange-500"
+                        placeholder={t('login.verificationCodePlaceholder')}
+                        maxLength={6}
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSendSmsCode}
+                        disabled={sendingCode || countdown > 0}
+                        className={`shrink-0 px-4 py-2.5 bg-gray-800 border border-gray-700 text-sm font-medium rounded-lg hover:border-orange-500 hover:text-orange-400 transition-colors whitespace-nowrap ${
+                          sendingCode || countdown > 0 ? 'opacity-70 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        {sendingCode
+                          ? t('login.sendingCode')
+                          : countdown > 0
+                            ? `${countdown}s`
+                            : t('login.sendCode')}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className={`w-full bg-orange-500 text-black font-medium rounded-lg px-4 py-2.5 hover:bg-orange-600 transition-colors ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    disabled={loading}
+                  >
+                    {loading ? t('login.loggingIn') : t('login.loginButton')}
+                  </button>
+                </div>
+              </form>
+            )}
+
             <div className="flex items-center my-6">
               <div className="flex-grow border-t border-gray-800"></div>
               <span className="px-4 text-sm text-gray-500">{t('login.orLoginWith')}</span>

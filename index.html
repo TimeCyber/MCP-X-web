@@ -44,6 +44,9 @@
     <link rel="alternate" hreflang="zh-CN" href="https://www.mcp-x.com" />
     <link rel="alternate" hreflang="en" href="https://www.mcp-x.com/en" />
     
+    <!-- 首屏背景图预加载，减少刷新黑屏感 -->
+    <link rel="preload" as="image" href="/images/hero.webp" type="image/webp" />
+    
     <!-- 字体使用系统字体栈，避免请求境外 CDN 拖慢国内加载速度 -->
     
     <!-- Structured Data (JSON-LD) -->
@@ -74,7 +77,15 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="min-height:100vh;background:#0a0a0a;color:#fff">
+        <div style="height:56px;border-bottom:1px solid rgba(31,41,55,.6)"></div>
+        <div style="max-width:960px;margin:0 auto;padding:64px 16px 40px">
+          <div style="height:40px;width:60%;max-width:360px;margin:0 auto 32px;background:#1f2937;border-radius:8px"></div>
+          <div style="height:160px;background:#1a1a1a;border:1px solid #1f2937;border-radius:16px"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

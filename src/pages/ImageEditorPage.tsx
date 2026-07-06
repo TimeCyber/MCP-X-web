@@ -15,11 +15,220 @@ import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
-import { loadMediaImage, prefetchMediaUrls, cleanExpiredCache } from '../utils/mediaCache';
+import { loadMediaImage, prefetchMediaUrls, cleanExpiredCache, isTemporaryMediaUrl, isPermanentMediaUrl } from '../utils/mediaCache';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
 const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+const extractImageUrlFromResponse = (src: string | null | undefined): string | null => {
+  if (!src) return null;
+  const imagesMatch = src.match(/<images>(.*?)<\/images>/);
+  if (imagesMatch?.[1]) return imagesMatch[1].trim();
+  if (src.startsWith('http') || src.startsWith('data:image/')) return src;
+  return src;
+};
+
+/**
+ * 解析生成/编辑结果的图片地址。
+ * 优先使用永久 OSS URL（体积小、可稳定写入 localStorage、可被聊天记录去重），
+ * 其次才用 base64，最后才用临时签名 URL。
+ */
+const resolveStableImageHref = (result: {
+  newImageBase64?: string | null;
+  newImageMimeType?: string | null;
+  imageUrl?: string | null;
+  textResponse?: string | null;
+}): string | null => {
+  const url = extractImageUrlFromResponse(result.imageUrl) || extractImageUrlFromResponse(result.textResponse);
+  // 优先永久 OSS URL
+  if (url && isPermanentMediaUrl(url) && !url.startsWith('data:')) {
+    return url;
+  }
+  // 其次 base64
+  if (result.newImageBase64) {
+    return `data:${result.newImageMimeType || 'image/png'};base64,${result.newImageBase64}`;
+  }
+  // 最后才用临时 URL（当次显示，不写入 localStorage，见 saveBoardsToCache）
+  if (url) return url;
+  return null;
+};
+
+/** 从聊天记录按顺序提取稳定的图片 URL（OSS 等永久链接） */
+const extractStableImageUrlsFromMessages = (messages: any[]): string[] => {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  const collectFromContent = (content: string) => {
+    const found: string[] = [];
+    for (const match of content.matchAll(/<images>(.*?)<\/images>/gs)) {
+      const url = match[1]?.trim();
+      if (url && (url.startsWith('http') || url.startsWith('data:'))) found.push(url);
+    }
+    for (const match of content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:jpg|jpeg|png|gif|webp|bmp))/gi)) {
+      const url = match[1];
+      if (url && !found.includes(url)) found.push(url);
+    }
+    for (const match of content.matchAll(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g)) {
+      const url = match[1];
+      if (url && !found.includes(url)) found.push(url);
+    }
+    return found;
+  };
+
+  for (const msg of messages) {
+    if (!msg.content) continue;
+    for (const url of collectFromContent(msg.content)) {
+      if (!seen.has(url) && isPermanentMediaUrl(url)) {
+        seen.add(url);
+        urls.push(url);
+      }
+    }
+  }
+  return urls;
+};
+
+/** 从聊天记录按顺序提取稳定的视频 URL（OSS 等永久链接） */
+const extractStableVideoUrlsFromMessages = (messages: any[]): string[] => {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  const collectFromContent = (content: string) => {
+    const found: string[] = [];
+    for (const match of content.matchAll(/<video>(.*?)<\/video>/gs)) {
+      const url = match[1]?.trim();
+      if (url && url.startsWith('http')) found.push(url);
+    }
+    for (const match of content.matchAll(/(https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi))/gi)) {
+      const url = match[1];
+      if (url && !found.includes(url)) found.push(url);
+    }
+    return found;
+  };
+
+  for (const msg of messages) {
+    if (!msg.content) continue;
+    for (const url of collectFromContent(msg.content)) {
+      if (!seen.has(url) && isPermanentMediaUrl(url)) {
+        seen.add(url);
+        urls.push(url);
+      }
+    }
+  }
+  return urls;
+};
+
+/** 用聊天记录中的永久 OSS URL 替换画布上过期的临时签名 URL */
+const refreshStaleMediaUrls = (elements: Element[], messages: any[]): Element[] => {
+  const stableUrls = extractStableImageUrlsFromMessages(messages);
+  const usedStable = new Set(
+    elements
+      .filter((e): e is ImageElement => e.type === 'image' && !!e.href && isPermanentMediaUrl(e.href))
+      .map((e) => e.href!)
+  );
+  const available = stableUrls.filter((u) => !usedStable.has(u));
+  let availIdx = 0;
+
+  return elements.map((el) => {
+    if (el.type !== 'image') return el;
+    if (el.href && isPermanentMediaUrl(el.href)) return el;
+    const replacement = available[availIdx++];
+    if (replacement) {
+      return { ...el, href: replacement, image: undefined };
+    }
+    return el;
+  });
+};
+
+/**
+ * 将聊天记录中的媒体（图片/视频）合并进画布元素。
+ * - 先用 refreshStaleMediaUrls 修复已有元素缺失/临时的 href
+ * - 再把聊天记录里存在、但画布上还没有的永久 URL 追加为新元素
+ * 用于解决 localStorage 缓存丢失元素（如配额溢出）后，刷新只剩少量元素的问题。
+ */
+const mergeChatMediaIntoElements = (elements: Element[], messages: any[]): Element[] => {
+  const refreshed = refreshStaleMediaUrls(elements, messages);
+
+  // 收集画布上已存在的永久媒体 URL；统计无法按 URL 匹配的 base64 图片数量
+  const presentUrls = new Set<string>();
+  let legacyBase64ImageCount = 0;
+  for (const el of refreshed) {
+    if (el.type === 'image') {
+      const href = (el as ImageElement).href;
+      if (href && href.startsWith('data:')) {
+        legacyBase64ImageCount++;
+      } else if (href) {
+        presentUrls.add(href);
+      }
+    } else if (el.type === 'video') {
+      const v = el as VideoElement;
+      if (v.videoUrl) presentUrls.add(v.videoUrl);
+      if (v.href) presentUrls.add(v.href);
+    }
+  }
+
+  // 聊天记录里画布上还没有的永久 URL
+  let chatImages = extractStableImageUrlsFromMessages(messages).filter((u) => !presentUrls.has(u));
+  // 历史 base64 图片对应聊天里的图片但无法按 URL 匹配，按顺序抵扣，避免重复追加
+  if (legacyBase64ImageCount > 0) {
+    chatImages = chatImages.slice(legacyBase64ImageCount);
+  }
+  const chatVideos = extractStableVideoUrlsFromMessages(messages).filter((u) => !presentUrls.has(u));
+  if (chatImages.length === 0 && chatVideos.length === 0) return refreshed;
+
+  // 追加位置：放在现有元素最下方，按 5 列网格排列，避免与已有元素重叠
+  const defaultSize = 512;
+  const gap = 100;
+  const columnsPerRow = 5;
+  let bottomY = 200;
+  for (const el of refreshed) {
+    bottomY = Math.max(bottomY, (el.y || 0) + (el.height || 0));
+  }
+  const startY = refreshed.length > 0 ? bottomY + gap : 200;
+
+  const appended: Element[] = [];
+  let offset = 0;
+  const placeAt = () => {
+    const row = Math.floor(offset / columnsPerRow);
+    const col = offset % columnsPerRow;
+    const x = 200 + col * (defaultSize + gap);
+    const y = startY + row * (defaultSize + gap);
+    offset++;
+    return { x, y };
+  };
+
+  for (const url of chatImages) {
+    const { x, y } = placeAt();
+    appended.push({
+      id: generateId(),
+      type: 'image',
+      x, y,
+      width: defaultSize,
+      height: defaultSize,
+      href: url,
+      mimeType: 'image/png',
+      visible: true,
+      locked: false
+    });
+  }
+  for (const url of chatVideos) {
+    const { x, y } = placeAt();
+    appended.push({
+      id: generateId(),
+      type: 'video',
+      x, y,
+      width: 640,
+      height: 360,
+      videoUrl: url,
+      href: url,
+      isPlaying: false,
+      visible: true,
+      locked: false
+    } as VideoElement);
+  }
+
+  return [...refreshed, ...appended];
+};
 const IMAGE_SIZE_CACHE_KEY = 'imageEditor_selectedImageSize';
 // 与 CreatorHubPage 共享的图片模型缓存 key，两边保持同步
 const SHARED_IMAGE_MODEL_KEY = 'shared_image_model_id';
@@ -512,22 +721,45 @@ const ImageEditorPage: React.FC = () => {
   // 保存 boards 到 localStorage（排除 image 对象，只保存 href）
   // 同时后台触发 IndexedDB 媒体缓存，确保 http URL 图片离线可用
   const saveBoardsToCache = useCallback((boardsToSave: Board[]) => {
-    try {
-      const serializedBoards = boardsToSave.map(board => ({
+    // dropBase64: 是否剥离 base64 data URL（配额溢出时降级，避免整体保存失败）
+    const serialize = (dropBase64: boolean) =>
+      boardsToSave.map(board => ({
         ...board,
-        elements: board.elements.map(el => ({
-          ...el,
-          image: undefined, // 排除 Image 对象，无法序列化
-          video: undefined  // 排除 Video 对象，无法序列化
-        }))
+        elements: board.elements.map(el => {
+          const base = {
+            ...el,
+            image: undefined,
+            video: undefined
+          };
+          const href = (el as ImageElement).href;
+          if (el.type === 'image' && href) {
+            // 临时签名 URL 会过期，不写入 localStorage，刷新后从聊天记录恢复
+            if (isTemporaryMediaUrl(href)) {
+              return { ...base, href: undefined };
+            }
+            // base64 体积巨大，降级时剥离，刷新后从聊天记录/IndexedDB 恢复
+            if (dropBase64 && href.startsWith('data:')) {
+              return { ...base, href: undefined };
+            }
+          }
+          return base;
+        })
       }));
-      localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serializedBoards));
+
+    try {
+      try {
+        localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serialize(false)));
+      } catch (quotaError) {
+        // 配额溢出：剥离 base64 后重试，保证元素结构与 OSS 链接可靠落盘
+        console.warn('boards 缓存超出配额，剥离 base64 后重试:', quotaError);
+        localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serialize(true)));
+      }
 
       // 后台静默缓存所有 http 图片 URL 到 IndexedDB
       const httpImageUrls: string[] = [];
       for (const board of boardsToSave) {
         for (const el of board.elements) {
-          if (el.type === 'image' && el.href && el.href.startsWith('http')) {
+          if (el.type === 'image' && el.href && el.href.startsWith('http') && !isTemporaryMediaUrl(el.href)) {
             httpImageUrls.push(el.href);
           }
         }
@@ -626,10 +858,16 @@ const ImageEditorPage: React.FC = () => {
       }
 
       for (const url of imageUrls) {
-        if (!addedUrls.has(url)) { addedUrls.add(url); imageUrlsToLoad.push(url); }
+        if (!addedUrls.has(url) && (url.startsWith('data:') || isPermanentMediaUrl(url))) {
+          addedUrls.add(url);
+          imageUrlsToLoad.push(url);
+        }
       }
       for (const url of videoUrls) {
-        if (!addedUrls.has(url)) { addedUrls.add(url); videoUrlsToLoad.push(url); }
+        if (!addedUrls.has(url) && isPermanentMediaUrl(url)) {
+          addedUrls.add(url);
+          videoUrlsToLoad.push(url);
+        }
       }
     }
 
@@ -1004,6 +1242,8 @@ const ImageEditorPage: React.FC = () => {
 
   // 画布上仅有 href、尚未解码的图片：异步加载并更新（同一 URL 只请求一次）
   const hydratingImageIdsRef = useRef<Set<string>>(new Set());
+  const hydrateRetryCountRef = useRef<Map<string, number>>(new Map());
+  const [hydrateRetryTick, setHydrateRetryTick] = useState(0);
   const elementsHydrateKey = useMemo(
     () => elements
       .filter((e) => e.type === 'image' && (e as ImageElement).href && !(e as ImageElement).image)
@@ -1020,52 +1260,83 @@ const ImageEditorPage: React.FC = () => {
         e.type === 'image' && !!(e as ImageElement).href && !(e as ImageElement).image
     );
 
+    const applyLoadedImage = (targetEl: ImageElement, img: HTMLImageElement, href?: string) => {
+      const maxDisplaySize = 800;
+      let w = img.naturalWidth || img.width || targetEl.width || 512;
+      let h = img.naturalHeight || img.height || targetEl.height || 512;
+      if (w > maxDisplaySize || h > maxDisplaySize) {
+        const scale = Math.min(maxDisplaySize / w, maxDisplaySize / h);
+        w *= scale;
+        h *= scale;
+      }
+
+      setElements((prev) =>
+        prev.map((item) => {
+          if (item.id !== targetEl.id || item.type !== 'image') return item;
+          const cur = item as ImageElement;
+          if (cur.image) return item;
+          return { ...cur, image: img, width: w, height: h, ...(href ? { href } : {}) };
+        })
+      );
+      setBoards((prev) =>
+        prev.map((b) =>
+          b.id !== currentBoardId
+            ? b
+            : {
+                ...b,
+                elements: b.elements.map((item) => {
+                  if (item.id !== targetEl.id || item.type !== 'image') return item;
+                  const cur = item as ImageElement;
+                  if (cur.image) return item;
+                  return { ...cur, image: img, width: w, height: h, ...(href ? { href } : {}) };
+                })
+              }
+        )
+      );
+    };
+
     pending.forEach((el) => {
       const href = el.href!;
       if (hydratingImageIdsRef.current.has(el.id)) return;
       hydratingImageIdsRef.current.add(el.id);
 
-      loadMediaImage(href).then((img) => {
-        hydratingImageIdsRef.current.delete(el.id);
-        if (!img) return;
+      (async () => {
+        let img = await loadMediaImage(href);
+        let finalHref = href;
 
-        const maxDisplaySize = 800;
-        let w = img.naturalWidth || img.width || el.width || 512;
-        let h = img.naturalHeight || img.height || el.height || 512;
-        if (w > maxDisplaySize || h > maxDisplaySize) {
-          const scale = Math.min(maxDisplaySize / w, maxDisplaySize / h);
-          w *= scale;
-          h *= scale;
+        // 临时 URL 加载失败时，从聊天记录取 mcpx 永久 OSS 重试
+        if (!img && isTemporaryMediaUrl(href) && currentSessionId) {
+          const userId = localStorage.getItem('userId');
+          if (userId) {
+            try {
+              const resp = await chatApi.getChatList({ sessionId: currentSessionId, userId });
+              if (resp.code === 200 && resp.rows) {
+                setSessionMessages(resp.rows);
+                const [refreshed] = refreshStaleMediaUrls([el], resp.rows);
+                const ossHref = (refreshed as ImageElement).href;
+                if (ossHref && ossHref !== href && isPermanentMediaUrl(ossHref)) {
+                  img = await loadMediaImage(ossHref);
+                  if (img) finalHref = ossHref;
+                }
+              }
+            } catch { /* ignore */ }
+          }
         }
 
-        setElements((prev) =>
-          prev.map((item) => {
-            if (item.id !== el.id || item.type !== 'image') return item;
-            const cur = item as ImageElement;
-            if (cur.image) return item;
-            return { ...cur, image: img, width: w, height: h };
-          })
-        );
-        setBoards((prev) => {
-          const updated = prev.map((b) =>
-            b.id !== currentBoardId
-              ? b
-              : {
-                  ...b,
-                  elements: b.elements.map((item) => {
-                    if (item.id !== el.id || item.type !== 'image') return item;
-                    const cur = item as ImageElement;
-                    if (cur.image) return item;
-                    return { ...cur, image: img, width: w, height: h };
-                  })
-                }
-          );
-          saveBoardsToCache(updated);
-          return updated;
-        });
-      });
+        hydratingImageIdsRef.current.delete(el.id);
+        if (!img) {
+          const retries = hydrateRetryCountRef.current.get(el.id) || 0;
+          if (retries < 3) {
+            hydrateRetryCountRef.current.set(el.id, retries + 1);
+            setTimeout(() => setHydrateRetryTick(t => t + 1), 2000 * (retries + 1));
+          }
+          return;
+        }
+        hydrateRetryCountRef.current.delete(el.id);
+        applyLoadedImage(el, img, finalHref !== href ? finalHref : undefined);
+      })();
     });
-  }, [elementsHydrateKey, elements, currentBoardId, saveBoardsToCache]);
+  }, [elementsHydrateKey, elements, currentBoardId, currentSessionId, hydrateRetryTick]);
 
   // 构建所有可用的媒体元素列表（从 session messages + 画布元素），供 @功能 和粘贴解析共用
   const buildAllMediaElements = useCallback((): Array<{type: 'image' | 'video', src: string, alt?: string, id: string, listIndex: number}> => {
@@ -2009,8 +2280,38 @@ const ImageEditorPage: React.FC = () => {
 
     // 只恢复单个画板，避免等待全部画板资源加载
     // 图片优先从 IndexedDB 缓存读取，避免重新请求网络
+    const loadVideoPoster = (videoEl: VideoElement): Promise<Element> =>
+      new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.crossOrigin = 'anonymous';
+        video.preload = 'metadata';
+        video.muted = true;
+        video.playsInline = true;
+
+        const timer = setTimeout(() => {
+          console.warn('视频封面加载超时:', videoEl.videoUrl?.substring(0, 80));
+          resolve({ ...videoEl, video, isPlaying: false });
+        }, 8000);
+
+        video.onseeked = () => {
+          clearTimeout(timer);
+          resolve({ ...videoEl, video, isPlaying: false });
+        };
+        video.onloadeddata = () => {
+          video.currentTime = 0.1;
+        };
+        video.onerror = () => {
+          clearTimeout(timer);
+          resolve(videoEl);
+        };
+
+        video.src = videoEl.videoUrl || '';
+        video.load();
+      });
+
     const restoreBoardElements = async (board: Board): Promise<Board> => {
-      const restoredElements = await Promise.all(board.elements.map(async (el) => {
+      // 先恢复图片（走统一并发控制），避免与视频大文件下载争抢连接
+      const imageRestored = await Promise.all(board.elements.map(async (el) => {
         if (el.type === 'image' && el.href && !el.image) {
           const img = await loadMediaImage(el.href);
           if (!img) return el;
@@ -2024,38 +2325,18 @@ const ImageEditorPage: React.FC = () => {
           }
           return { ...el, image: img, width: displayWidth, height: displayHeight };
         }
-        if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
-          const videoEl = el as VideoElement;
-          return new Promise<Element>((resolve) => {
-            const video = document.createElement('video');
-            video.crossOrigin = 'anonymous';
-            video.preload = 'auto';
-            video.muted = true;
-            video.playsInline = true;
-
-            const timer = setTimeout(() => {
-              console.warn('视频封面加载超时:', videoEl.videoUrl?.substring(0, 80));
-              resolve({ ...videoEl, video, isPlaying: false });
-            }, 5000);
-
-            video.onseeked = () => {
-              clearTimeout(timer);
-              resolve({ ...videoEl, video, isPlaying: false });
-            };
-            video.onloadeddata = () => {
-              video.currentTime = 0.1;
-            };
-            video.onerror = () => {
-              clearTimeout(timer);
-              resolve(videoEl);
-            };
-
-            video.src = videoEl.videoUrl || '';
-            video.load();
-          });
-        }
         return el;
       }));
+
+      // 视频串行加载封面，避免多个 mp4 同时下载占满浏览器连接池
+      const restoredElements: Element[] = [];
+      for (const el of imageRestored) {
+        if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
+          restoredElements.push(await loadVideoPoster(el as VideoElement));
+        } else {
+          restoredElements.push(el);
+        }
+      }
       return { ...board, elements: restoredElements };
     };
 
@@ -2134,28 +2415,56 @@ const ImageEditorPage: React.FC = () => {
         setElements(targetBoard.elements ? [...targetBoard.elements] : []);
         setIsInitialized(true);
 
-        // 异步恢复当前画板媒体对象，恢复后立即渲染
-        restoreBoardElements(targetBoard).then((restoredBoard) => {
-          if (cancelled) return;
-          setBoards(prev => {
-            const updated = prev.map(b => {
-              if (b.id !== restoredBoard.id) return b;
-              return {
-                ...restoredBoard,
-                elements: mergeElementsKeepLocal(restoredBoard.elements, b.elements || [])
-              };
+        const restoreAndApply = (board: Board) => {
+          restoreBoardElements(board).then((restoredBoard) => {
+            if (cancelled) return;
+            setBoards(prev => {
+              const updated = prev.map(b => {
+                if (b.id !== restoredBoard.id) return b;
+                return {
+                  ...restoredBoard,
+                  elements: mergeElementsKeepLocal(restoredBoard.elements, b.elements || [])
+                };
+              });
+              saveBoardsToCache(updated);
+              return updated;
             });
-            saveBoardsToCache(updated);
-            return updated;
+            setElements(prev => {
+              const currentActiveId = loadCurrentBoardIdFromCache() || board.id;
+              if (currentActiveId === restoredBoard.id || currentActiveId === restoredBoard.sessionId) {
+                return mergeElementsKeepLocal(restoredBoard.elements, prev);
+              }
+              return prev;
+            });
           });
-          setElements(prev => {
-            const currentActiveId = loadCurrentBoardIdFromCache() || targetBoard.id;
-            if (currentActiveId === restoredBoard.id || currentActiveId === restoredBoard.sessionId) {
-              return mergeElementsKeepLocal(restoredBoard.elements, prev);
+        };
+
+        // 先从聊天记录刷新过期 URL 并补齐缺失的媒体元素，再恢复媒体对象
+        if (targetBoard.sessionId) {
+          chatApi.getChatList({ sessionId: targetBoard.sessionId, userId }).then((resp) => {
+            if (cancelled || resp.code !== 200 || !resp.rows) {
+              restoreAndApply(targetBoard);
+              return;
             }
-            return prev;
+            setSessionMessages(resp.rows);
+            // 合并聊天记录里的全部媒体：修复过期 URL + 补齐缓存丢失的元素
+            const mergedElements = mergeChatMediaIntoElements(targetBoard.elements || [], resp.rows);
+            const mergedBoard = { ...targetBoard, elements: mergedElements };
+            if (mergedElements.length !== (targetBoard.elements || []).length || mergedElements !== targetBoard.elements) {
+              setElements(mergedElements);
+              setBoards(prev => {
+                const updated = prev.map(b => b.id === mergedBoard.id ? mergedBoard : b);
+                saveBoardsToCache(updated);
+                return updated;
+              });
+            }
+            restoreAndApply(mergedBoard);
+          }).catch(() => {
+            restoreAndApply(targetBoard);
           });
-        });
+        } else {
+          restoreAndApply(targetBoard);
+        }
 
         // 后台仅同步画板元数据，不全量拉取所有画板消息
         syncBoardsMetaFromServer(cachedBoards, targetBoard.id);
@@ -3140,47 +3449,27 @@ const ImageEditorPage: React.FC = () => {
         referenceMaterials
       );
 
-      // 解析图片URL - 处理特殊格式 data:<images>url</images>data:data:
-      const extractImageUrl = (src: string | null | undefined): string | null => {
-        if (!src) return null;
-
-        // 检查是否是特殊格式 data:<images>url</images>data:data:
-        const imagesMatch = src.match(/<images>(.*?)<\/images>/);
-        if (imagesMatch && imagesMatch[1]) {
-          return imagesMatch[1].trim();
-        }
-
-        // 如果是普通URL或base64，直接返回
-        if (src.startsWith('http') || src.startsWith('data:image/')) {
-          return src;
-        }
-
-        return src;
-      };
-
-      // 优先使用imageUrl，其次使用base64
-      let imageSrc = extractImageUrl(result.imageUrl) ||
-        extractImageUrl(result.textResponse) ||
-        (result.newImageBase64 ? `data:${result.newImageMimeType};base64,${result.newImageBase64}` : null);
+      // 解析图片URL - 优先 base64 / 永久 OSS，避免缓存 volces 临时签名链接
+      let imageSrc = resolveStableImageHref(result);
 
       if (imageSrc) {
-        // 辅助函数：创建图片元素
-        const createImageElement = (img: HTMLImageElement, href: string) => {
-          // 计算当前屏幕中心在画布坐标系中的位置
+        // 辅助函数：创建图片元素（img 可选，无 img 时由 hydrate 异步加载）
+        const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
+          const w = img?.width || 512;
+          const h = img?.height || 512;
           const viewportCenterX = (canvasSize.width / 2 - pan.x) / zoom;
           const viewportCenterY = (canvasSize.height / 2 - pan.y) / zoom;
-          
-          // 将图片放置在屏幕中心
+
           const newElement: ImageElement = {
             id: generateId(),
             type: 'image',
-            x: viewportCenterX - (img.width || 512) / 2,
-            y: viewportCenterY - (img.height || 512) / 2,
-            width: img.width || 512,
-            height: img.height || 512,
-            href: href,
+            x: viewportCenterX - w / 2,
+            y: viewportCenterY - h / 2,
+            width: w,
+            height: h,
+            href,
             mimeType: 'image/png',
-            image: img,
+            ...(img ? { image: img } : {}),
             visible: true,
             locked: false
           };
@@ -3190,31 +3479,26 @@ const ImageEditorPage: React.FC = () => {
             return newElements;
           });
           setSelectedElementIds([newElement.id]);
-          // 清除@的元素
           setAtMentionedElements([]);
           toast.success('图片生成成功');
         };
 
-        // 图片加载错误处理函数
-        const handleImageLoadError = () => {
+        const img = await loadMediaImage(imageSrc);
+        if (img) {
+          appendImageElement(imageSrc, img);
+        } else if (isPermanentMediaUrl(imageSrc)) {
+          // 接口已成功返回 OSS，解码失败时先占位，由 hydrate 异步加载
+          appendImageElement(imageSrc);
+        } else {
           console.error('Image load failed');
-          // 检查是否是余额不足错误
-          if (result.textResponse && result.textResponse.includes('余额不足')) {
+          if (result.textResponse?.includes('余额不足')) {
             toast.error(result.textResponse);
           } else {
-            toast.error('操作失败，可能账户余额不足');
+            toast.error('图片加载失败，请刷新后重试');
           }
-        };
-
-        const img = await loadMediaImage(imageSrc);
-        if (!img) {
-          handleImageLoadError();
-        } else {
-          createImageElement(img, imageSrc);
         }
       } else {
-        // 检查是否是余额不足错误
-        if (result.textResponse && result.textResponse.includes('余额不足')) {
+        if (result.textResponse?.includes('余额不足')) {
           toast.error(result.textResponse);
         } else {
           toast.error(result.textResponse || '图片生成失败');
@@ -3333,47 +3617,26 @@ const ImageEditorPage: React.FC = () => {
       const modelName = selectedModelInfo?.modelName;
       const result = await editImage(imagesData, prompt, undefined, modelName, currentSessionId, selectedImageSize);
 
-      // 解析图片URL - 处理特殊格式 data:<images>url</images>data:data:
-      const extractImageUrl = (src: string | null | undefined): string | null => {
-        if (!src) return null;
-
-        // 检查是否是特殊格式 data:<images>url</images>data:data:
-        const imagesMatch = src.match(/<images>(.*?)<\/images>/);
-        if (imagesMatch && imagesMatch[1]) {
-          return imagesMatch[1].trim();
-        }
-
-        // 如果是普通URL或base64，直接返回
-        if (src.startsWith('http') || src.startsWith('data:image/')) {
-          return src;
-        }
-
-        return src;
-      };
-
-      // 优先使用imageUrl，其次使用base64
-      let imageSrc = extractImageUrl(result.imageUrl) ||
-        extractImageUrl(result.textResponse) ||
-        (result.newImageBase64 ? `data:${result.newImageMimeType};base64,${result.newImageBase64}` : null);
+      // 解析图片URL - 优先 base64 / 永久 OSS，避免缓存 volces 临时签名链接
+      let imageSrc = resolveStableImageHref(result);
 
       if (imageSrc) {
-        // 辅助函数：创建图片元素
-        const createImageElement = (img: HTMLImageElement, href: string) => {
-          // 计算当前屏幕中心在画布坐标系中的位置
+        const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
+          const w = img?.width || 512;
+          const h = img?.height || 512;
           const viewportCenterX = (canvasSize.width / 2 - pan.x) / zoom;
           const viewportCenterY = (canvasSize.height / 2 - pan.y) / zoom;
-          
-          // 将图片放置在屏幕中心
+
           const newElement: ImageElement = {
             id: generateId(),
             type: 'image',
-            x: viewportCenterX - (img.width || 512) / 2,
-            y: viewportCenterY - (img.height || 512) / 2,
-            width: img.width || 512,
-            height: img.height || 512,
-            href: href,
+            x: viewportCenterX - w / 2,
+            y: viewportCenterY - h / 2,
+            width: w,
+            height: h,
+            href,
             mimeType: 'image/png',
-            image: img,
+            ...(img ? { image: img } : {}),
             visible: true,
             locked: false
           };
@@ -3386,22 +3649,14 @@ const ImageEditorPage: React.FC = () => {
           toast.success('图片编辑成功');
         };
 
-        // 图片加载错误处理函数
-        const handleImageLoadError = () => {
-          console.error('Image load failed');
-          // 检查是否是余额不足错误
-          if (result.textResponse && result.textResponse.includes('余额不足')) {
-            toast.error(result.textResponse);
-          } else {
-            toast.error('图片加载失败');
-          }
-        };
-
         const img = await loadMediaImage(imageSrc);
-        if (!img) {
-          handleImageLoadError();
+        if (img) {
+          appendImageElement(imageSrc, img);
+        } else if (isPermanentMediaUrl(imageSrc)) {
+          appendImageElement(imageSrc);
         } else {
-          createImageElement(img, imageSrc);
+          console.error('Image load failed');
+          toast.error(result.textResponse?.includes('余额不足') ? result.textResponse : '图片加载失败，请刷新后重试');
         }
       } else {
         // 检查是否是余额不足错误
@@ -3974,64 +4229,93 @@ const ImageEditorPage: React.FC = () => {
 
   // 跟踪已经开始加载的视频 ID，避免重复加载
   const loadingVideoIds = useRef<Set<string>>(new Set());
+  const activeVideoLoadsRef = useRef(0);
+  const MAX_CONCURRENT_VIDEO_LOADS = 2;
+  const pendingVideoLoadQueueRef = useRef<Array<() => void>>([]);
+
+  const acquireVideoLoadSlot = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (activeVideoLoadsRef.current < MAX_CONCURRENT_VIDEO_LOADS) {
+        activeVideoLoadsRef.current++;
+        resolve();
+      } else {
+        pendingVideoLoadQueueRef.current.push(resolve);
+      }
+    });
+
+  const releaseVideoLoadSlot = (): void => {
+    const next = pendingVideoLoadQueueRef.current.shift();
+    if (next) {
+      next();
+    } else {
+      activeVideoLoadsRef.current = Math.max(0, activeVideoLoadsRef.current - 1);
+    }
+  };
 
   // 自动加载视频元素的首帧 - 当视频元素有 videoUrl 但没有有效的 video 对象时自动加载
   useEffect(() => {
     const videoElements = elements.filter(el => el.type === 'video') as VideoElement[];
-    
+
     videoElements.forEach(videoEl => {
-      if (!videoEl.videoUrl) return; // 没有 URL，跳过
-      
-      // 检查是否已有有效的 video 对象
-      const isValidVideoElement = videoEl.video && 
+      if (!videoEl.videoUrl) return;
+
+      const isValidVideoElement = videoEl.video &&
         typeof (videoEl.video as HTMLVideoElement).play === 'function';
-      
-      if (isValidVideoElement) return; // 已有有效的 video 对象，跳过
-      
-      // 检查是否已经在加载中
+
+      if (isValidVideoElement) return;
+
       const loadKey = `${videoEl.id}-${videoEl.videoUrl}`;
       if (loadingVideoIds.current.has(loadKey)) return;
-      
-      // 标记为加载中
+
       loadingVideoIds.current.add(loadKey);
-      
-      // 需要加载视频
-      console.log('自动加载视频:', videoEl.id, videoEl.videoUrl);
-      
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.preload = 'auto';
-      video.muted = false; // 允许播放声音
-      video.playsInline = true;
-      
-      video.onloadeddata = () => {
-        console.log('视频数据加载完成，跳转到第一帧:', videoEl.id);
-        video.currentTime = 0.01;
-      };
-      
-      video.onseeked = () => {
-        console.log('视频seek完成，更新元素:', videoEl.id);
-        setElements(prev => prev.map(item => 
-          item.id === videoEl.id 
-            ? { ...item, video: video, isPlaying: false } as VideoElement 
-            : item
-        ));
-      };
-      
-      video.onended = () => {
-        setElements(prev => prev.map(item => 
-          item.id === videoEl.id ? { ...item, isPlaying: false } as VideoElement : item
-        ));
-      };
-      
-      video.onerror = (e) => {
-        console.error('视频加载失败:', videoEl.id, e);
-        // 加载失败，从加载中列表移除，允许重试
-        loadingVideoIds.current.delete(loadKey);
-      };
-      
-      video.src = videoEl.videoUrl;
-      video.load();
+
+      (async () => {
+        await acquireVideoLoadSlot();
+        try {
+          const video = document.createElement('video');
+          video.crossOrigin = 'anonymous';
+          video.preload = 'metadata';
+          video.muted = false;
+          video.playsInline = true;
+
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              resolve();
+            }, 8000);
+
+            video.onloadeddata = () => {
+              video.currentTime = 0.01;
+            };
+
+            video.onseeked = () => {
+              clearTimeout(timer);
+              setElements(prev => prev.map(item =>
+                item.id === videoEl.id
+                  ? { ...item, video: video, isPlaying: false } as VideoElement
+                  : item
+              ));
+              resolve();
+            };
+
+            video.onended = () => {
+              setElements(prev => prev.map(item =>
+                item.id === videoEl.id ? { ...item, isPlaying: false } as VideoElement : item
+              ));
+            };
+
+            video.onerror = () => {
+              clearTimeout(timer);
+              loadingVideoIds.current.delete(loadKey);
+              resolve();
+            };
+
+            video.src = videoEl.videoUrl!;
+            video.load();
+          });
+        } finally {
+          releaseVideoLoadSlot();
+        }
+      })();
     });
   }, [elements]);
 

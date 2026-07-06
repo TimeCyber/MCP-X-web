@@ -164,6 +164,26 @@ export const api = {
       });
       return response.data;
     },
+
+    // 手机验证码接口
+    smsCode: async (phoneNumber: string) => {
+      const response = await apiClient.post<ApiResponse<any>>(
+        '/web/auth/sms/send-code',
+        null,
+        { params: { phoneNumber } }
+      );
+      return response.data;
+    },
+
+    // 手机验证码登录
+    smsLogin: async (phoneNumber: string, smsCode: string, inviteCode?: string) => {
+      const response = await apiClient.post<ApiResponse<LoginVO>>('/web/auth/sms/login', {
+        phoneNumber,
+        smsCode,
+        ...(inviteCode ? { inviteCode } : {}),
+      });
+      return response.data;
+    },
     
     // 验证token接口
     verifyToken: async () => {

@@ -1,5 +1,9 @@
 import axios from 'axios';
 import config from '../config';
+import { isPermanentMediaUrl } from '../utils/mediaCache';
+
+// 图片生成/编辑可能耗时较长，与视频生成对齐放宽超时
+const IMAGE_API_TIMEOUT_MS = 30 * 60 * 1000;
 
 // 创建axios实例
 const apiClient = axios.create({
@@ -8,7 +12,7 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
     'Accept': '*/*'
   },
-  timeout: 600000 // 10分钟超时时间，考虑到图片生成可能需要较长时间
+  timeout: IMAGE_API_TIMEOUT_MS
 });
 
 // 请求拦截器
@@ -144,7 +148,7 @@ export async function generateImageFromText(
 ): Promise<{ newImageBase64: string | null; newImageMimeType: string | null; textResponse: string | null; imageUrl?: string | null; }> {
   // 创建超时Promise
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('图片生成超时（10分钟）')), 10 * 60 * 1000); // 10分钟超时
+    setTimeout(() => reject(new Error('图片生成超时（30分钟）')), IMAGE_API_TIMEOUT_MS);
   });
 
   const generatePromise = async (): Promise<{ newImageBase64: string | null; newImageMimeType: string | null; textResponse: string | null; imageUrl?: string | null; }> => {
@@ -201,7 +205,17 @@ export async function generateImageFromText(
       }
     }
 
-    // 如果有图片URL，尝试转换为 base64
+    // 已有永久 OSS URL 时直接返回，不再二次下载转 base64（避免 CORS/超时导致误报失败）
+    if (imageUrl && isPermanentMediaUrl(imageUrl)) {
+      return {
+        newImageBase64: null,
+        newImageMimeType: 'image/png',
+        textResponse: null,
+        imageUrl
+      };
+    }
+
+    // 临时 URL 才尝试转 base64
     if (imageUrl) {
       try {
         const base64Data = await fetchImageAsBase64(imageUrl);
@@ -271,7 +285,7 @@ export async function editImage(
 ): Promise<{ newImageBase64: string | null; newImageMimeType: string | null; textResponse: string | null; imageUrl?: string | null; }> {
   // 创建超时Promise
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('图片编辑超时（10分钟）')), 10 * 60 * 1000); // 10分钟超时
+    setTimeout(() => reject(new Error('图片编辑超时（30分钟）')), IMAGE_API_TIMEOUT_MS);
   });
 
   const editPromise = async (): Promise<{ newImageBase64: string | null; newImageMimeType: string | null; textResponse: string | null; imageUrl?: string | null; }> => {
@@ -344,7 +358,17 @@ export async function editImage(
       }
     }
 
-    // 如果有图片URL，尝试转换为 base64
+    // 已有永久 OSS URL 时直接返回，不再二次下载转 base64（避免 CORS/超时导致误报失败）
+    if (imageUrl && isPermanentMediaUrl(imageUrl)) {
+      return {
+        newImageBase64: null,
+        newImageMimeType: 'image/png',
+        textResponse: null,
+        imageUrl
+      };
+    }
+
+    // 临时 URL 才尝试转 base64
     if (imageUrl) {
       try {
         const base64Data = await fetchImageAsBase64(imageUrl);

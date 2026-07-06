@@ -113,6 +113,22 @@
 ## 🎨 Latest Updates
 
 <details open>
+<summary><b>v0.1.8 — Homepage Load Speed · Canvas Cache Fix · Privacy Compliance</b></summary>
+
+- 🏠 **Homepage load experience**: Significantly reduced black screen on refresh
+  - Homepage eager-loaded (no route lazy-load wait); inline HTML skeleton + `hero.webp` preload
+  - Showcase list `sessionStorage` cache for instant display on refresh
+  - Lazy-loaded cards with skeleton placeholders; `hero.mp4` only loads in video mode
+- 🖼️ **Image Editor · canvas cache fix**: Fixed images/videos failing to load after refresh with many elements or after video generation
+  - Filter temporary signed URLs (volces / DashScope); prefer permanent OSS links and base64
+  - Merge missing canvas elements from chat history on refresh; graceful `localStorage` quota fallback
+  - Image API timeout extended to 30 minutes; OSS URLs no longer re-fetched as base64
+  - Media load concurrency control and serial video restore to prevent resource starvation
+- 📜 **Privacy policy compliance**: Added OAID, ANDROID ID, location, and AdScope SDK disclosures for Huawei AppGallery review
+
+</details>
+
+<details>
 <summary><b>v0.1.7 — Storyboard Mode · Image 2 · One-Click Web Generation</b></summary>
 
 - 🎬 **Video Studio · Storyboard Mode**: Professional storyboard workflow
