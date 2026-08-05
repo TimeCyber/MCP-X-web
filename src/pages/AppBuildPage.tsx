@@ -15,8 +15,10 @@ import {
   getStaticPreviewUrl,
   formatCodeGenType,
   isPptType,
+  fileToBase64DataUrl,
   type AppInfo,
-  type ChatMessage as ChatMessageType
+  type ChatMessage as ChatMessageType,
+  type WebgenMode,
 } from '../services/appBuildApi';
 import { toast } from '../utils/toast';
 import { exportToPptx, captureSlideScreenshots, injectScreenshotScript } from '../utils/exportPptx';
@@ -24,7 +26,8 @@ import {
   Send, 
   Cloud, 
   X,
-  FileDown
+  FileDown,
+  ImagePlus
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Logo } from '../components/ui/Logo';
@@ -297,6 +300,24 @@ export const AppBuildPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const locationState = location.state as {
+    mode?: WebgenMode;
+    images?: string[];
+  } | null;
+  const [mode, setMode] = useState<WebgenMode>(() => {
+    if (locationState?.mode === 'pro' || locationState?.mode === 'normal') return locationState.mode;
+    if (appId) {
+      const saved = localStorage.getItem(`webgen_mode_${appId}`);
+      if (saved === 'pro' || saved === 'normal') return saved;
+    }
+    return 'normal';
+  });
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingInitImagesRef = useRef<string[] | null>(
+    locationState?.images?.length ? locationState.images.slice(0, 1) : null
+  );
   /** 当前/最近一次 AI 生成的耗时与 token 统计 */
   const [generationStats, setGenerationStats] = useState<{ elapsedMs: number; totalTokens: number | null }>({
     elapsedMs: 0,
@@ -357,6 +378,35 @@ export const AppBuildPage: React.FC = () => {
   const userScrolledUpRef = useRef(false);
   const userId = localStorage.getItem('userId');
   const token = localStorage.getItem('token');
+
+  useEffect(() => {
+    if (!appId) return;
+    localStorage.setItem(`webgen_mode_${appId}`, mode);
+  }, [appId, mode]);
+
+  const handlePickImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = Array.from(e.target.files || []).find((f) => f.type.startsWith('image/'));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error(currentLanguage === 'zh' ? `${file.name} 超过 10MB` : `${file.name} exceeds 10MB`);
+      return;
+    }
+    setUploadingImages(true);
+    try {
+      const dataUrl = await fileToBase64DataUrl(file);
+      setAttachedImage(dataUrl);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || (currentLanguage === 'zh' ? '图片读取失败' : 'Failed to read image'));
+    } finally {
+      setUploadingImages(false);
+    }
+  };
+
+  const removeAttachedImage = () => {
+    setAttachedImage(null);
+  };
   // 代码折叠状态持久存储（会话级）
   const codeOpenMapRef = useRef<Map<string, boolean>>(new Map());
   // iframe ref（用于导出 PPT 等操作）
@@ -677,6 +727,9 @@ export const AppBuildPage: React.FC = () => {
     }
     
     console.log('自动发送初始提示词:', initPrompt);
+
+    const initImages = pendingInitImagesRef.current;
+    pendingInitImagesRef.current = null;
     
     // 生成唯一ID，确保不重复
     const timestamp = Date.now();
@@ -688,6 +741,7 @@ export const AppBuildPage: React.FC = () => {
       type: 'user',
       content: initPrompt.trim(),
       id: userMessageId,
+      images: initImages?.length ? initImages : undefined,
     };
     
     // 添加AI消息占位符
@@ -706,7 +760,9 @@ export const AppBuildPage: React.FC = () => {
     try {
       // 加入上下文模板（首次只有系统提示词，不含历史）
       const contextWrapped = `${initPrompt.trim()}`;
-      await generateCode(contextWrapped, 1); // AI消息在第2个位置（索引1）
+      await generateCode(contextWrapped, 1, {
+        images: initImages || undefined,
+      }); // AI消息在第2个位置（索引1）
     } catch (error) {
       console.error(currentLanguage === 'zh' ? '自动发送初始提示词失败:' : 'Auto send init prompt failed:', error);
       toast.error(currentLanguage === 'zh' ? '自动发送初始提示词失败' : 'Auto send init prompt failed');
@@ -717,7 +773,7 @@ export const AppBuildPage: React.FC = () => {
   // 发送消息（overrideMessage：直接编辑模式自动构建的消息，跳过输入框 state）
   const handleSendMessage = async (overrideMessage?: string) => {
     const rawText = overrideMessage !== undefined ? overrideMessage : userInput.trim();
-    if (!rawText || isGenerating || !appId) return;
+    if ((!rawText && !attachedImage) || isGenerating || !appId || uploadingImages) return;
     
     let message = rawText;
     // const contextMessages = buildConversationMessages(8);
@@ -734,8 +790,17 @@ export const AppBuildPage: React.FC = () => {
       }
       message += elementContext;
     }
+
+    if (!message.trim() && attachedImage) {
+      message = currentLanguage === 'zh' ? '请参考上传的图片进行修改' : 'Please update based on the uploaded image';
+    }
     
-    if (overrideMessage === undefined) setUserInput('');
+    const sendImages = attachedImage ? [attachedImage] : undefined;
+
+    if (overrideMessage === undefined) {
+      setUserInput('');
+      setAttachedImage(null);
+    }
     
     // 生成唯一ID，确保不重复
     const timestamp = Date.now();
@@ -747,6 +812,7 @@ export const AppBuildPage: React.FC = () => {
       type: 'user',
       content: message,
       id: userMessageId,
+      images: sendImages,
     };
     
     // 添加AI消息占位符
@@ -772,7 +838,9 @@ export const AppBuildPage: React.FC = () => {
     setIsGenerating(true);
     
     try {
-      await generateCode(message, aiMessageIndex);
+      await generateCode(message, aiMessageIndex, {
+        images: sendImages,
+      });
     } catch (error) {
       console.error(currentLanguage === 'zh' ? '发送消息失败:' : 'Send message failed:', error);
       toast.error(currentLanguage === 'zh' ? '发送消息失败' : 'Failed to send');
@@ -784,6 +852,7 @@ export const AppBuildPage: React.FC = () => {
   const generateCode = async (
     userMessage: string,
     aiMessageIndex: number,
+    imageOpts?: { images?: string[] },
   ) => {
     if (!appId) return;
     
@@ -873,8 +942,10 @@ export const AppBuildPage: React.FC = () => {
             loadAppInfo();
           }, 1000);
         },
-        // 传递上下文
-        // { messages: contextMessages as any }
+        {
+          mode,
+          ...(imageOpts?.images?.length ? { images: imageOpts.images } : {}),
+        }
       );
     } catch (error) {
       console.error('应用构建生成代码失败:', error);
@@ -1198,6 +1269,18 @@ export const AppBuildPage: React.FC = () => {
                     {message.type === 'user' ? (
                       <div className="flex justify-end min-w-0 w-full">
                         <div className="min-w-0 max-w-full w-fit px-4 py-2 bg-blue-600 text-white rounded-2xl shadow-sm overflow-hidden">
+                          {message.images && message.images.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-2">
+                              {message.images.map((src, imgIdx) => (
+                                <img
+                                  key={imgIdx}
+                                  src={src}
+                                  alt=""
+                                  className="w-14 h-14 rounded-md object-cover border border-white/30"
+                                />
+                              ))}
+                            </div>
+                          )}
                           <div className="markdown-body user-message-markdown min-w-0 max-w-full break-words">
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}
@@ -1404,7 +1487,62 @@ export const AppBuildPage: React.FC = () => {
 
           {/* 输入区域 */}
           <div className="border-t border-slate-200 p-4 bg-white/80 backdrop-blur rounded-b-lg">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className="text-xs text-slate-500">{currentLanguage === 'zh' ? '模式' : 'Mode'}</span>
+              <div className="inline-flex rounded-md border border-slate-300 bg-white p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setMode('normal')}
+                  disabled={!isOwner || isGenerating}
+                  className={`px-2.5 py-1 text-xs rounded transition-colors ${
+                    mode === 'normal' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {currentLanguage === 'zh' ? '普通' : 'Normal'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('pro')}
+                  disabled={!isOwner || isGenerating}
+                  className={`px-2.5 py-1 text-xs rounded transition-colors ${
+                    mode === 'pro' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Pro
+                </button>
+              </div>
+            </div>
+            {attachedImage && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                  <img src={attachedImage} alt="" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={removeAttachedImage}
+                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isGenerating || !isOwner || uploadingImages}
+                className="self-end px-3 py-2 border border-slate-300 text-slate-600 rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                title={currentLanguage === 'zh' ? '上传参考图' : 'Upload image'}
+              >
+                <ImagePlus size={16} />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handlePickImages}
+              />
               <textarea
                 value={userInput}
                 onChange={(e) => setUserInput(e.target.value)}
@@ -1422,7 +1560,7 @@ export const AppBuildPage: React.FC = () => {
               />
               <button
                 onClick={() => handleSendMessage()}
-                disabled={isGenerating || !userInput.trim() || !isOwner}
+                disabled={isGenerating || uploadingImages || (!userInput.trim() && !attachedImage) || !isOwner}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
                 <Send size={16} />

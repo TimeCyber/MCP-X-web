@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Brain, X, FileText, Image, Video, Music, Mic, MicOff } from 'lucide-react';
+import { Send, Brain, X, FileText, Image, Video, Music, Mic, MicOff, Volume2 } from 'lucide-react';
 import { FileUpload } from './FileUpload';
 import { KnowledgeSelect } from './KnowledgeSelect';
 import { KnowledgeInfo } from '../../types';
@@ -26,6 +26,8 @@ interface ChatInputProps {
   onOpenKnowledgeManager?: () => void;
   friendlyEnabled?: boolean;
   onToggleFriendly?: () => void;
+  voiceEnabled?: boolean;
+  onToggleVoice?: () => void;
   onInput?: () => void;
 }
 
@@ -42,6 +44,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onOpenKnowledgeManager,
   friendlyEnabled = false,
   onToggleFriendly,
+  voiceEnabled = false,
+  onToggleVoice,
   onInput
 }) => {
   const [message, setMessage] = useState('');
@@ -409,6 +413,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </button>
           )}
 
+          {/* 语音回复：开启后请求传 voice:true，服务端返回 <audio> */}
+          {onToggleVoice && (
+            <button
+              type="button"
+              onClick={onToggleVoice}
+              disabled={disabled}
+              className={`p-2 transition-colors disabled:opacity-50 ${
+                voiceEnabled
+                  ? 'text-violet-500 hover:text-violet-400'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}
+              title={voiceEnabled ? '关闭语音回复' : '开启语音回复'}
+            >
+              <Volume2 size={20} />
+            </button>
+          )}
+
           {/* 语音录入按钮（移至发送按钮旁） */}
 
           {/* 深度思考开关 */}
@@ -490,6 +511,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <div className="flex items-center gap-2 text-blue-500">
             <Brain size={14} />
             <span>深度思考模式已开启</span>
+          </div>
+        )}
+
+        {voiceEnabled && (
+          <div className="flex items-center gap-2 text-violet-500">
+            <Volume2 size={14} />
+            <span>语音回复已开启</span>
           </div>
         )}
         

@@ -106,4 +106,6 @@ export interface Board {
   canvasBackgroundColor?: string;
   sessionId?: string;
   isLoading?: boolean; // 标记画板是否正在加载图片
+  /** 用户从画布删除过的媒体 URL，刷新时勿再从聊天记录合并回来 */
+  removedMediaUrls?: string[];
 }

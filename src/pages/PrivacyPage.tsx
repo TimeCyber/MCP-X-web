@@ -78,6 +78,33 @@ export const PrivacyPage: React.FC = () => {
     },
   ];
 
+  const youlianghuiRows: InfoRow[] = [
+    {
+      type: t('privacy.bssidType'),
+      purpose: t('privacy.ylhBssidPurpose'),
+      method: t('privacy.ylhBssidMethod'),
+      scope: t('privacy.ylhBssidScope'),
+    },
+    {
+      type: t('privacy.gyroscopeType'),
+      purpose: t('privacy.ylhGyroscopePurpose'),
+      method: t('privacy.ylhGyroscopeMethod'),
+      scope: t('privacy.ylhGyroscopeScope'),
+    },
+    {
+      type: t('privacy.accelerometerType'),
+      purpose: t('privacy.ylhAccelerometerPurpose'),
+      method: t('privacy.ylhAccelerometerMethod'),
+      scope: t('privacy.ylhAccelerometerScope'),
+    },
+    {
+      type: t('privacy.installedAppsType'),
+      purpose: t('privacy.ylhInstalledAppsPurpose'),
+      method: t('privacy.ylhInstalledAppsMethod'),
+      scope: t('privacy.ylhInstalledAppsScope'),
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
       <Navbar />
@@ -121,6 +148,11 @@ export const PrivacyPage: React.FC = () => {
                   <h3 className="text-lg font-semibold text-orange-400 mb-1">{t('privacy.adscopeSDK')}</h3>
                   <p className="text-gray-400 text-sm mb-4">{t('privacy.adscopeProvider')}</p>
                   <InfoTable headers={tableHeaders} rows={adscopeRows} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-orange-400 mb-1">{t('privacy.ylhSDK')}</h3>
+                  <p className="text-gray-400 text-sm mb-4">{t('privacy.ylhProvider')}</p>
+                  <InfoTable headers={tableHeaders} rows={youlianghuiRows} />
                 </div>
               </div>
             </section>

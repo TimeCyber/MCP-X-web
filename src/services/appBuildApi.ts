@@ -57,6 +57,9 @@ apiClient.interceptors.response.use(
   }
 );
 
+/** 网页生成模式：普通 / Pro */
+export type WebgenMode = 'normal' | 'pro';
+
 // 应用构建相关接口
 export interface AppBuildRequest {
   // 可选：后端若提供自动命名则无需传入
@@ -68,6 +71,10 @@ export interface AppBuildRequest {
   // 可选：后端可根据提示词或默认策略决定生成类型
   codeGenType?: 'HTML' | 'REACT' | 'VUE' | 'STATIC';
   userId: string;
+  /** 生成模式：normal | pro */
+  mode?: WebgenMode;
+  /** 参考图 base64 列表（可含 data: 前缀；当前 UI 仅传 1 张） */
+  images?: string[];
 }
 
 export interface AppInfo {
@@ -84,6 +91,8 @@ export interface AppInfo {
   deployedTime?: string;
   // 后端 dev 模式下返回的预览地址（如 http://localhost:4100/#/）
   previewUrl?: string;
+  /** 创建时选择的生成模式 */
+  mode?: WebgenMode;
 }
 
 export interface ChatMessage {
@@ -92,6 +101,14 @@ export interface ChatMessage {
   loading?: boolean;
   createTime?: string;
   id?: string;
+  /** 用户消息附带的参考图预览（base64 data URL，当前最多 1 张） */
+  images?: string[];
+}
+
+export interface ChatToGenCodeOptions {
+  mode?: WebgenMode;
+  /** 参考图 base64 列表（可含 data: 前缀；当前 UI 仅传 1 张） */
+  images?: string[];
 }
 
 export interface ChatHistoryResponse {
@@ -138,6 +155,16 @@ export const getMyApps = async (params: {
   return response.data;
 };
 
+/** 将 File 读为 data URL（base64） */
+export const fileToBase64DataUrl = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+};
+
 // 聊天生成代码 - 流式响应
 export const chatToGenCode = async (
   appId: string,
@@ -145,6 +172,7 @@ export const chatToGenCode = async (
   onChunk: (chunk: any) => void,
   onError?: (error: any) => void,
   onComplete?: () => void,
+  options?: ChatToGenCodeOptions,
 ) => {
   const token = localStorage.getItem('token');
 
@@ -188,6 +216,8 @@ export const chatToGenCode = async (
         appId,
         message,
         stream: true,
+        mode: options?.mode || 'normal',
+        ...(options?.images?.length ? { images: options.images } : {}),
       }),
       // 添加信号控制，用于超时中断（延长至30分钟，适配大模型慢返回）
       signal: AbortSignal.timeout ? AbortSignal.timeout(1800000) : undefined, // 30分钟超时

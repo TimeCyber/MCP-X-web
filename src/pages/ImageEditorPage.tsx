@@ -54,10 +54,44 @@ const resolveStableImageHref = (result: {
   return null;
 };
 
-/** 从聊天记录按顺序提取稳定的图片 URL（OSS 等永久链接） */
+/** 用于去重比较：去掉 query/hash，避免同一资源不同签名被当成新图 */
+const mediaUrlKey = (url: string): string => {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url.split('?')[0].split('#')[0];
+  }
+};
+
+/**
+ * 视频生成相关消息索引：这些消息里的图片是首帧/参考图/尾帧，不是画布上的「新生成图」，
+ * 刷新时不应再追加为图片副本。
+ */
+const getVideoRelatedMessageIndexes = (messages: any[]): Set<number> => {
+  const skip = new Set<number>();
+  for (let i = 0; i < messages.length; i++) {
+    const content = String(messages[i]?.content || '');
+    const hasVideo =
+      /<video>[\s\S]*?<\/video>/i.test(content) ||
+      /https?:\/\/[^\s<>"]+\.(?:mp4|webm|mov|avi)/i.test(content);
+    if (!hasVideo) continue;
+    skip.add(i);
+    // 紧邻的上一条 user 消息通常是带参考图的生视频请求
+    if (i > 0 && messages[i - 1]?.role === 'user') {
+      skip.add(i - 1);
+    }
+  }
+  return skip;
+};
+
+/** 从聊天记录按顺序提取稳定的图片 URL（OSS 等永久链接）；跳过视频参考图 */
 const extractStableImageUrlsFromMessages = (messages: any[]): string[] => {
   const urls: string[] = [];
   const seen = new Set<string>();
+  const skipMsg = getVideoRelatedMessageIndexes(messages);
 
   const collectFromContent = (content: string) => {
     const found: string[] = [];
@@ -76,11 +110,14 @@ const extractStableImageUrlsFromMessages = (messages: any[]): string[] => {
     return found;
   };
 
-  for (const msg of messages) {
-    if (!msg.content) continue;
+  for (let i = 0; i < messages.length; i++) {
+    if (skipMsg.has(i)) continue;
+    const msg = messages[i];
+    if (!msg?.content) continue;
     for (const url of collectFromContent(msg.content)) {
-      if (!seen.has(url) && isPermanentMediaUrl(url)) {
-        seen.add(url);
+      const key = mediaUrlKey(url);
+      if (!seen.has(key) && isPermanentMediaUrl(url)) {
+        seen.add(key);
         urls.push(url);
       }
     }
@@ -140,16 +177,38 @@ const refreshStaleMediaUrls = (elements: Element[], messages: any[]): Element[] 
   });
 };
 
+/** 从元素中收集可持久化的媒体 URL（排除 data:） */
+const collectMediaUrlsFromElements = (els: Element[]): string[] => {
+  const urls: string[] = [];
+  for (const el of els) {
+    if (el.type === 'image') {
+      const href = (el as ImageElement).href;
+      if (href && !href.startsWith('data:')) urls.push(href);
+    } else if (el.type === 'video') {
+      const v = el as VideoElement;
+      if (v.videoUrl) urls.push(v.videoUrl);
+      if (v.href && v.href !== v.videoUrl) urls.push(v.href);
+    }
+  }
+  return urls;
+};
+
 /**
  * 将聊天记录中的媒体（图片/视频）合并进画布元素。
  * - 先用 refreshStaleMediaUrls 修复已有元素缺失/临时的 href
  * - 再把聊天记录里存在、但画布上还没有的永久 URL 追加为新元素
+ * - 跳过用户已从画布删除过的 URL（removedMediaUrls）
  * 用于解决 localStorage 缓存丢失元素（如配额溢出）后，刷新只剩少量元素的问题。
  */
-const mergeChatMediaIntoElements = (elements: Element[], messages: any[]): Element[] => {
+const mergeChatMediaIntoElements = (
+  elements: Element[],
+  messages: any[],
+  removedMediaUrls: string[] = [],
+): Element[] => {
   const refreshed = refreshStaleMediaUrls(elements, messages);
+  const removed = new Set(removedMediaUrls);
 
-  // 收集画布上已存在的永久媒体 URL；统计无法按 URL 匹配的 base64 图片数量
+  // 收集画布上已存在的永久媒体 URL（按规范化 key 去重）；统计 base64 图片数量
   const presentUrls = new Set<string>();
   let legacyBase64ImageCount = 0;
   for (const el of refreshed) {
@@ -158,22 +217,28 @@ const mergeChatMediaIntoElements = (elements: Element[], messages: any[]): Eleme
       if (href && href.startsWith('data:')) {
         legacyBase64ImageCount++;
       } else if (href) {
-        presentUrls.add(href);
+        presentUrls.add(mediaUrlKey(href));
       }
     } else if (el.type === 'video') {
       const v = el as VideoElement;
-      if (v.videoUrl) presentUrls.add(v.videoUrl);
-      if (v.href) presentUrls.add(v.href);
+      if (v.videoUrl) presentUrls.add(mediaUrlKey(v.videoUrl));
+      if (v.href) presentUrls.add(mediaUrlKey(v.href));
     }
   }
 
-  // 聊天记录里画布上还没有的永久 URL
-  let chatImages = extractStableImageUrlsFromMessages(messages).filter((u) => !presentUrls.has(u));
+  const removedKeys = new Set(Array.from(removed).map(mediaUrlKey));
+
+  // 聊天记录里画布上还没有的永久 URL（已跳过视频参考图；排除用户已删除的）
+  let chatImages = extractStableImageUrlsFromMessages(messages).filter(
+    (u) => !presentUrls.has(mediaUrlKey(u)) && !removed.has(u) && !removedKeys.has(mediaUrlKey(u))
+  );
   // 历史 base64 图片对应聊天里的图片但无法按 URL 匹配，按顺序抵扣，避免重复追加
   if (legacyBase64ImageCount > 0) {
     chatImages = chatImages.slice(legacyBase64ImageCount);
   }
-  const chatVideos = extractStableVideoUrlsFromMessages(messages).filter((u) => !presentUrls.has(u));
+  const chatVideos = extractStableVideoUrlsFromMessages(messages).filter(
+    (u) => !presentUrls.has(mediaUrlKey(u)) && !removed.has(u) && !removedKeys.has(mediaUrlKey(u))
+  );
   if (chatImages.length === 0 && chatVideos.length === 0) return refreshed;
 
   // 追加位置：放在现有元素最下方，按 5 列网格排列，避免与已有元素重叠
@@ -805,15 +870,23 @@ const ImageEditorPage: React.FC = () => {
   }, []);
 
   // 从聊天记录中解析图片和视频元素（只解析 AI 返回的内容）
-  const parseImagesFromMessages = useCallback(async (messages: any[]): Promise<Element[]> => {
+  const parseImagesFromMessages = useCallback(async (
+    messages: any[],
+    removedMediaUrls: string[] = [],
+  ): Promise<Element[]> => {
     const addedUrls = new Set<string>();
+    const removed = new Set(removedMediaUrls);
+    const removedKeys = new Set(removedMediaUrls.map(mediaUrlKey));
+    // 跳过视频生成相关消息中的参考图，避免刷新后复制首帧/参考图
+    const skipImageMsg = getVideoRelatedMessageIndexes(messages);
 
     // ── 阶段一：遍历所有消息，收集全部唯一 URL（不做任何网络请求）──
     const imageUrlsToLoad: string[] = [];
     const videoUrlsToLoad: string[] = [];
 
-    for (const msg of messages) {
-      if (!msg.content) continue;
+    for (let msgIndex = 0; msgIndex < messages.length; msgIndex++) {
+      const msg = messages[msgIndex];
+      if (!msg?.content) continue;
       const content = msg.content;
       const imageUrls: string[] = [];
       const videoUrls: string[] = [];
@@ -857,15 +930,22 @@ const ImageEditorPage: React.FC = () => {
         }
       }
 
-      for (const url of imageUrls) {
-        if (!addedUrls.has(url) && (url.startsWith('data:') || isPermanentMediaUrl(url))) {
-          addedUrls.add(url);
-          imageUrlsToLoad.push(url);
+      // 视频相关消息中的图片（首帧/参考图）不落画布，只保留视频本身
+      if (!skipImageMsg.has(msgIndex)) {
+        for (const url of imageUrls) {
+          const key = mediaUrlKey(url);
+          if (removed.has(url) || removedKeys.has(key)) continue;
+          if (!addedUrls.has(key) && (url.startsWith('data:') || isPermanentMediaUrl(url))) {
+            addedUrls.add(key);
+            imageUrlsToLoad.push(url);
+          }
         }
       }
       for (const url of videoUrls) {
-        if (!addedUrls.has(url) && isPermanentMediaUrl(url)) {
-          addedUrls.add(url);
+        const key = mediaUrlKey(url);
+        if (removed.has(url) || removedKeys.has(key)) continue;
+        if (!addedUrls.has(key) && isPermanentMediaUrl(url)) {
+          addedUrls.add(key);
           videoUrlsToLoad.push(url);
         }
       }
@@ -950,7 +1030,10 @@ const ImageEditorPage: React.FC = () => {
   }, []);
 
   // 加载 session 的聊天记录并解析图片和视频
-  const loadSessionImages = useCallback(async (sessionId: string): Promise<Element[]> => {
+  const loadSessionImages = useCallback(async (
+    sessionId: string,
+    removedMediaUrls: string[] = [],
+  ): Promise<Element[]> => {
     const userId = localStorage.getItem('userId');
     if (!userId) return [];
 
@@ -960,13 +1043,29 @@ const ImageEditorPage: React.FC = () => {
         console.log('加载session聊天记录成功, 消息数:', response.rows.length);
         // 保存消息列表用于@功能
         setSessionMessages(response.rows);
-        return await parseImagesFromMessages(response.rows);
+        return await parseImagesFromMessages(response.rows, removedMediaUrls);
       }
     } catch (error) {
       console.error('加载session聊天记录失败:', error);
     }
     return [];
   }, [parseImagesFromMessages]);
+
+  /** 记录用户从画布删除的媒体 URL，防止刷新后从聊天记录再次合并回来 */
+  const rememberRemovedMedia = useCallback((removedElements: Element[]) => {
+    const urls = collectMediaUrlsFromElements(removedElements);
+    if (!urls.length || !currentBoardId) return;
+    setBoards((prev) => {
+      const updated = prev.map((b) => {
+        if (b.id !== currentBoardId && b.sessionId !== currentBoardId) return b;
+        const existing = new Set(b.removedMediaUrls || []);
+        urls.forEach((u) => existing.add(u));
+        return { ...b, removedMediaUrls: Array.from(existing) };
+      });
+      saveBoardsToCache(updated);
+      return updated;
+    });
+  }, [currentBoardId, saveBoardsToCache]);
 
   // 加载当前session的所有messages用于@功能
   const loadSessionMessages = useCallback(async (sessionId: string) => {
@@ -1084,6 +1183,8 @@ const ImageEditorPage: React.FC = () => {
   const [zoom, setZoom] = useState(0.25);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const panRef = useRef({ x: 0, y: 0 }); // 用于在事件处理中获取最新的pan值，避免闭包问题
+  const zoomRef = useRef(0.25);
+  const canvasSizeRef = useRef({ width: window.innerWidth, height: window.innerHeight });
   const [croppingState, setCroppingState] = useState<{ elementId: string; originalElement: ImageElement; cropBox: Rect } | null>(null);
   const [isCropDragging, setIsCropDragging] = useState(false);
   const [cropDragHandle, setCropDragHandle] = useState<string | null>(null);
@@ -1160,18 +1261,39 @@ const ImageEditorPage: React.FC = () => {
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
   const promptOverlayRef = useRef<HTMLDivElement>(null);
 
-  // 同步pan值到ref，避免闭包问题
+  // 仅作兜底同步；缩放/平移的写入路径会立即更新 ref，避免 await 期间读到旧值
   useEffect(() => {
     panRef.current = pan;
   }, [pan]);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+  useEffect(() => {
+    canvasSizeRef.current = canvasSize;
+  }, [canvasSize]);
+
+  /** 当前视口中心（画布坐标），使新生成/上传元素出现在用户正在看的屏幕中间 */
+  const getViewportCenterPlacement = useCallback((width: number, height: number) => {
+    const container = containerRef.current;
+    const rect = container?.getBoundingClientRect();
+    const vw = (rect && rect.width > 0) ? rect.width : (canvasSizeRef.current.width || window.innerWidth);
+    const vh = (rect && rect.height > 0) ? rect.height : (canvasSizeRef.current.height || window.innerHeight);
+    const currentPan = panRef.current;
+    const currentZoom = zoomRef.current > 0 ? zoomRef.current : 1;
+    const cx = (vw / 2 - currentPan.x) / currentZoom;
+    const cy = (vh / 2 - currentPan.y) / currentZoom;
+    return { x: cx - width / 2, y: cy - height / 2 };
+  }, []);
 
   // 监听窗口大小变化，更新画布大小
   useEffect(() => {
     const updateCanvasSize = () => {
-      setCanvasSize({
+      const next = {
         width: window.innerWidth,
         height: window.innerHeight
-      });
+      };
+      canvasSizeRef.current = next;
+      setCanvasSize(next);
     };
 
     window.addEventListener('resize', updateCanvasSize);
@@ -1661,6 +1783,8 @@ const ImageEditorPage: React.FC = () => {
       // Delete  键删除选中元素（仅当不在输入元素中时）
       if ((e.key === 'Delete') && selectedElementIds.length > 0 && !isInputElement) {
         e.preventDefault();
+        const removed = elements.filter(el => selectedElementIds.includes(el.id));
+        rememberRemovedMedia(removed);
         // 删除所有选中的元素
         setElements(prev => {
           const newElements = prev.filter(el => !selectedElementIds.includes(el.id));
@@ -1690,7 +1814,7 @@ const ImageEditorPage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedElementIds, elements]);
+  }, [selectedElementIds, elements, rememberRemovedMedia]);
 
   // 点击外部关闭模型下拉菜单
   useEffect(() => {
@@ -1903,7 +2027,11 @@ const ImageEditorPage: React.FC = () => {
   const handleWheel = (e: WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom(prev => Math.max(0.01, Math.min(5, prev * delta)));
+    setZoom(prev => {
+      const next = Math.max(0.01, Math.min(5, prev * delta));
+      zoomRef.current = next; // 立即同步，避免生成完成时读到旧 zoom
+      return next;
+    });
   };
 
   // Add wheel event listener for zooming
@@ -1972,13 +2100,16 @@ const ImageEditorPage: React.FC = () => {
           img.onload = resolve;
         });
 
+        const startW = 300;
+        const startH = (300 * img.height) / img.width;
+        const { x: startX, y: startY } = getViewportCenterPlacement(startW, startH);
         startImageElement = {
           id: generateId(),
           type: 'image',
-          x: 50,
-          y: 50,
-          width: 300,
-          height: (300 * img.height) / img.width,
+          x: startX,
+          y: startY,
+          width: startW,
+          height: startH,
           href: imageDataUrl,
           image: img,
           visible: true,
@@ -2004,13 +2135,16 @@ const ImageEditorPage: React.FC = () => {
           img.onload = resolve;
         });
 
+        const endW = 300;
+        const endH = (300 * img.height) / img.width;
+        const { x: endX, y: endY } = getViewportCenterPlacement(endW, endH);
         endImageElement = {
           id: generateId(),
           type: 'image',
-          x: 400,
-          y: 50,
-          width: 300,
-          height: (300 * img.height) / img.width,
+          x: endX,
+          y: endY,
+          width: endW,
+          height: endH,
           href: imageDataUrl,
           image: img,
           visible: true,
@@ -2018,14 +2152,15 @@ const ImageEditorPage: React.FC = () => {
         };
       }
 
-      // 创建空白视频占位元素（按比例展示预留框）
+      // 创建空白视频占位元素（始终落在当前视口中心，与是否有首帧无关）
       const placeholderSize = getVideoPlaceholderSize((state.ratio as '16:9' | '9:16' | '1:1') || '16:9');
       videoElementId = generateId();
+      const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
-        x: startImageElement ? 50 : 100,
-        y: startImageElement ? startImageElement.y + startImageElement.height + 50 : 100,
+        x: videoX,
+        y: videoY,
         width: placeholderSize.width,
         height: placeholderSize.height,
         videoUrl: undefined, // 占位，还没有视频URL
@@ -2163,7 +2298,7 @@ const ImageEditorPage: React.FC = () => {
     } finally {
       setIsGeneratingVideo(false);
     }
-  }, [currentSessionId, selectedVideoModel, saveToHistory]);
+  }, [currentSessionId, selectedVideoModel, saveToHistory, getViewportCenterPlacement]);
 
   // 自动提交功能 - 从 CreatorHubPage 跳转过来时自动生成图片或视频
   useEffect(() => {
@@ -2421,9 +2556,27 @@ const ImageEditorPage: React.FC = () => {
             setBoards(prev => {
               const updated = prev.map(b => {
                 if (b.id !== restoredBoard.id) return b;
+                // 保留本地已记录的删除 URL，避免异步恢复覆盖用户删除状态
+                const removedMediaUrls = Array.from(new Set([
+                  ...(restoredBoard.removedMediaUrls || []),
+                  ...(b.removedMediaUrls || []),
+                ]));
+                const mergedEls = mergeElementsKeepLocal(restoredBoard.elements, b.elements || [])
+                  .filter((el) => {
+                    if (el.type === 'video') {
+                      const v = el as VideoElement;
+                      return !removedMediaUrls.includes(v.videoUrl || '') && !removedMediaUrls.includes(v.href || '');
+                    }
+                    if (el.type === 'image') {
+                      const href = (el as ImageElement).href;
+                      return !href || href.startsWith('data:') || !removedMediaUrls.includes(href);
+                    }
+                    return true;
+                  });
                 return {
                   ...restoredBoard,
-                  elements: mergeElementsKeepLocal(restoredBoard.elements, b.elements || [])
+                  removedMediaUrls,
+                  elements: mergedEls,
                 };
               });
               saveBoardsToCache(updated);
@@ -2432,7 +2585,20 @@ const ImageEditorPage: React.FC = () => {
             setElements(prev => {
               const currentActiveId = loadCurrentBoardIdFromCache() || board.id;
               if (currentActiveId === restoredBoard.id || currentActiveId === restoredBoard.sessionId) {
-                return mergeElementsKeepLocal(restoredBoard.elements, prev);
+                const removed = new Set([
+                  ...(restoredBoard.removedMediaUrls || []),
+                ]);
+                return mergeElementsKeepLocal(restoredBoard.elements, prev).filter((el) => {
+                  if (el.type === 'video') {
+                    const v = el as VideoElement;
+                    return !removed.has(v.videoUrl || '') && !removed.has(v.href || '');
+                  }
+                  if (el.type === 'image') {
+                    const href = (el as ImageElement).href;
+                    return !href || href.startsWith('data:') || !removed.has(href);
+                  }
+                  return true;
+                });
               }
               return prev;
             });
@@ -2447,18 +2613,29 @@ const ImageEditorPage: React.FC = () => {
               return;
             }
             setSessionMessages(resp.rows);
-            // 合并聊天记录里的全部媒体：修复过期 URL + 补齐缓存丢失的元素
-            const mergedElements = mergeChatMediaIntoElements(targetBoard.elements || [], resp.rows);
-            const mergedBoard = { ...targetBoard, elements: mergedElements };
-            if (mergedElements.length !== (targetBoard.elements || []).length || mergedElements !== targetBoard.elements) {
-              setElements(mergedElements);
-              setBoards(prev => {
-                const updated = prev.map(b => b.id === mergedBoard.id ? mergedBoard : b);
+            // 基于当前画布合并，避免异步返回时整表覆盖用户已生成/平移后的元素
+            let mergedSnapshot: Element[] | null = null;
+            setElements(prev => {
+              mergedSnapshot = mergeChatMediaIntoElements(
+                prev,
+                resp.rows,
+                targetBoard.removedMediaUrls || [],
+              );
+              return mergedSnapshot;
+            });
+            if (mergedSnapshot) {
+              const mergedBoard = { ...targetBoard, elements: mergedSnapshot };
+              setBoards(boardsPrev => {
+                const updated = boardsPrev.map(b =>
+                  b.id === mergedBoard.id ? { ...b, elements: mergedSnapshot! } : b
+                );
                 saveBoardsToCache(updated);
                 return updated;
               });
+              restoreAndApply(mergedBoard);
+            } else {
+              restoreAndApply(targetBoard);
             }
-            restoreAndApply(mergedBoard);
           }).catch(() => {
             restoreAndApply(targetBoard);
           });
@@ -2491,7 +2668,10 @@ const ImageEditorPage: React.FC = () => {
           setIsInitialized(true);
 
           // 只拉当前画板 message/list，避免全量慢加载
-          const currentElements = await loadSessionImages(targetBoard.sessionId || '');
+          const currentElements = await loadSessionImages(
+            targetBoard.sessionId || '',
+            targetBoard.removedMediaUrls || [],
+          );
           if (cancelled) return;
           setBoards(prev => {
             const updated = prev.map(b => {
@@ -2620,9 +2800,10 @@ const ImageEditorPage: React.FC = () => {
     // 使用ref获取最新的pan值，避免闭包问题导致位置跳动
     const currentPan = panRef.current;
 
-    // 考虑平移和缩放，计算鼠标在canvas坐标系中的位置
-    const canvasX = (mouseX - currentPan.x) / zoom;
-    const canvasY = (mouseY - currentPan.y) / zoom;
+    // 考虑平移和缩放，计算鼠标在canvas坐标系中的位置（zoom 也走 ref，与落点计算一致）
+    const currentZoom = zoomRef.current > 0 ? zoomRef.current : 1;
+    const canvasX = (mouseX - currentPan.x) / currentZoom;
+    const canvasY = (mouseY - currentPan.y) / currentZoom;
 
     return { x: canvasX, y: canvasY };
   };
@@ -3325,8 +3506,7 @@ const ImageEditorPage: React.FC = () => {
           displayHeight = displayHeight * scale;
         }
 
-        const displayX = (canvasSize.width - displayWidth) / 2;
-        const displayY = (canvasSize.height - displayHeight) / 2;
+        const { x: displayX, y: displayY } = getViewportCenterPlacement(displayWidth, displayHeight);
 
         const newElement: VideoElement = {
           id: generateId(),
@@ -3381,9 +3561,7 @@ const ImageEditorPage: React.FC = () => {
           displayHeight = img.height * scale;
         }
 
-        // 居中显示
-        const displayX = (canvasSize.width - displayWidth) / 2;
-        const displayY = (canvasSize.height - displayHeight) / 2;
+        const { x: displayX, y: displayY } = getViewportCenterPlacement(displayWidth, displayHeight);
 
         const newElement: ImageElement = {
           id: generateId(),
@@ -3457,14 +3635,13 @@ const ImageEditorPage: React.FC = () => {
         const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
           const w = img?.width || 512;
           const h = img?.height || 512;
-          const viewportCenterX = (canvasSize.width / 2 - pan.x) / zoom;
-          const viewportCenterY = (canvasSize.height / 2 - pan.y) / zoom;
+          const { x, y } = getViewportCenterPlacement(w, h);
 
           const newElement: ImageElement = {
             id: generateId(),
             type: 'image',
-            x: viewportCenterX - w / 2,
-            y: viewportCenterY - h / 2,
+            x,
+            y,
             width: w,
             height: h,
             href,
@@ -3624,14 +3801,13 @@ const ImageEditorPage: React.FC = () => {
         const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
           const w = img?.width || 512;
           const h = img?.height || 512;
-          const viewportCenterX = (canvasSize.width / 2 - pan.x) / zoom;
-          const viewportCenterY = (canvasSize.height / 2 - pan.y) / zoom;
+          const { x, y } = getViewportCenterPlacement(w, h);
 
           const newElement: ImageElement = {
             id: generateId(),
             type: 'image',
-            x: viewportCenterX - w / 2,
-            y: viewportCenterY - h / 2,
+            x,
+            y,
             width: w,
             height: h,
             href,
@@ -3797,14 +3973,15 @@ const ImageEditorPage: React.FC = () => {
         referenceMaterialsCount: referenceMaterials.length
       });
 
-      // 创建空白视频占位元素（按当前比例展示预留框）
+      // 创建空白视频占位：始终当前视口中心（与是否选中图片无关）
       const placeholderSize = getVideoPlaceholderSize(videoRatio);
       videoElementId = generateId();
+      const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
-        x: selectedImages.length > 0 ? selectedImages[0].x + selectedImages[0].width + 50 : 100,
-        y: selectedImages.length > 0 ? selectedImages[0].y : 100,
+        x: videoX,
+        y: videoY,
         width: placeholderSize.width,
         height: placeholderSize.height,
         videoUrl: undefined, // 占位，还没有视频URL
@@ -3956,15 +4133,17 @@ const ImageEditorPage: React.FC = () => {
       return;
     }
 
-    // 立即在画布上创建视频占位元素
+    // 立即在画布上创建视频占位：始终当前视口中心（不放在起始图右侧）
     let videoElementId: string | null = generateId();
+    const placeholderSize = getVideoPlaceholderSize(videoRatio);
+    const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
     const videoElement: VideoElement = {
       id: videoElementId,
       type: 'video',
-      x: selectedStartImage.x + selectedStartImage.width + 50, // 放在起始图片右侧
-      y: selectedStartImage.y,
-      width: selectedStartImage.width,
-      height: selectedStartImage.height,
+      x: videoX,
+      y: videoY,
+      width: placeholderSize.width,
+      height: placeholderSize.height,
       videoUrl: undefined, // 先不设置URL，显示占位符
       href: undefined,
       visible: true,
@@ -4143,7 +4322,7 @@ const ImageEditorPage: React.FC = () => {
       setIsGeneratingVideo(false);
       setVideoProgress(null);
     }
-  }, [selectedStartImage, selectedEndImage, videoPrompt, selectedVideoModel, videoResolution, videoRatio, videoDuration, currentSessionId]);
+  }, [selectedStartImage, selectedEndImage, videoPrompt, selectedVideoModel, videoResolution, videoRatio, videoDuration, currentSessionId, getViewportCenterPlacement, processPromptForBackend, buildReferenceMaterials, saveToHistory]);
 
   // Handle start crop - 开始剪裁选中的图片
   const handleStartCrop = (element: ImageElement) => {
@@ -5384,6 +5563,7 @@ const ImageEditorPage: React.FC = () => {
                 <button
                   title={t('contextMenu.delete')}
                   onClick={() => {
+                    rememberRemovedMedia([selectedElement]);
                     setElements(prev => {
                       const newElements = prev.filter(el => el.id !== selectedElement.id);
                       // 保存历史记录
@@ -5407,13 +5587,21 @@ const ImageEditorPage: React.FC = () => {
         {/* Zoom Controls */}
         <div className="absolute top-20 right-4 flex flex-row gap-2 z-30">
           <button
-            onClick={() => setZoom(prev => Math.min(5, prev + 0.1))}
+            onClick={() => setZoom(prev => {
+              const next = Math.min(5, prev + 0.1);
+              zoomRef.current = next;
+              return next;
+            })}
             className="w-8 h-8 bg-white/10 backdrop-blur-xl border border-white/20 rounded-lg shadow-lg text-white hover:bg-white/20 flex items-center justify-center transition-all"
           >
             +
           </button>
           <button
-            onClick={() => setZoom(prev => Math.max(0.01, prev - 0.1))}
+            onClick={() => setZoom(prev => {
+              const next = Math.max(0.01, prev - 0.1);
+              zoomRef.current = next;
+              return next;
+            })}
             className="w-8 h-8 bg-white/10 backdrop-blur-xl border border-white/20 rounded-lg shadow-lg text-white hover:bg-white/20 flex items-center justify-center transition-all"
           >
             -

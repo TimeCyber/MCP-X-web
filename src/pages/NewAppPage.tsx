@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { createApp, getMyApps, formatCodeGenType, type AppInfo } from '../services/appBuildApi';
+import {
+  createApp,
+  getMyApps,
+  formatCodeGenType,
+  fileToBase64DataUrl,
+  type AppInfo,
+  type WebgenMode,
+} from '../services/appBuildApi';
 import { toast } from '../utils/toast';
-import { ArrowLeft, Code, Calendar } from 'lucide-react';
+import { ArrowLeft, Code, Calendar, ImagePlus, X } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 interface CreateAppForm {
@@ -13,6 +20,8 @@ interface NewAppPageLocationState {
   initialPrompt?: string;
   autoSubmit?: boolean;
 }
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
 // 生成类型选择已取消
 
@@ -70,10 +79,38 @@ export const NewAppPage: React.FC = () => {
     initPrompt: '',
   });
   const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState<WebgenMode>('normal');
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [myApps, setMyApps] = useState<AppInfo[]>([]);
   const [myAppsLoading, setMyAppsLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState(examplePrompts[0].category);
   const userId = localStorage.getItem('userId');
+
+  const handlePickImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = Array.from(e.target.files || []).find((f) => f.type.startsWith('image/'));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+    if (file.size > MAX_IMAGE_SIZE) {
+      toast.error(currentLanguage === 'zh' ? `${file.name} 超过 10MB` : `${file.name} exceeds 10MB`);
+      return;
+    }
+    setUploadingImages(true);
+    try {
+      const dataUrl = await fileToBase64DataUrl(file);
+      setAttachedImage(dataUrl);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || (currentLanguage === 'zh' ? '图片读取失败' : 'Failed to read image'));
+    } finally {
+      setUploadingImages(false);
+    }
+  };
+
+  const removeImage = () => {
+    setAttachedImage(null);
+  };
 
   const formatTime = (timeString: string) => {
     try {
@@ -141,19 +178,27 @@ export const NewAppPage: React.FC = () => {
       navigate('/login', { state: { from: location } });
       return;
     }
-    if (creating) return;
+    if (creating || uploadingImages) return;
     setCreating(true);
     try {
       const response = await createApp({
         initPrompt: form.initPrompt.trim(),
         message: form.initPrompt.trim(),
         userId,
+        mode,
+        ...(attachedImage ? { images: [attachedImage] } : {}),
       });
       if (response.code === 200 && response.data) {
         toast.success(currentLanguage === 'zh' ? '应用创建成功' : 'App created successfully');
-        navigate(`/app/build/${response.data}`);
+        const appId = typeof response.data === 'object' ? (response.data as any).id || response.data : response.data;
+        navigate(`/app/build/${appId}`, {
+          state: {
+            mode,
+            ...(attachedImage ? { images: [attachedImage] } : {}),
+          },
+        });
       } else {
-        toast.error((currentLanguage === 'zh' ? '创建失败: ' : 'Create failed: ') + response.message);
+        toast.error((currentLanguage === 'zh' ? '创建失败: ' : 'Create failed: ') + (response.message || response.msg));
       }
     } catch (error) {
       console.error(currentLanguage === 'zh' ? '创建应用失败:' : 'Create app failed:', error);
@@ -215,12 +260,56 @@ export const NewAppPage: React.FC = () => {
           {/* <label className="block text-sm font-medium text-slate-700">
             初始提示词
           </label> */}
+          {/* 普通 / Pro 模式 */}
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-sm text-slate-600">{currentLanguage === 'zh' ? '生成模式' : 'Mode'}</span>
+            <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setMode('normal')}
+                className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+                  mode === 'normal' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {currentLanguage === 'zh' ? '普通' : 'Normal'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('pro')}
+                className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+                  mode === 'pro' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Pro
+              </button>
+            </div>
+            <span className="text-xs text-slate-500">
+              {mode === 'pro'
+                ? (currentLanguage === 'zh' ? '更强模型，效果更好' : 'Stronger model')
+                : (currentLanguage === 'zh' ? '更快更省' : 'Faster & cheaper')}
+            </span>
+          </div>
+
           <div className="relative overflow-visible">
+            {attachedImage && (
+              <div className="flex flex-wrap gap-2 mb-2 px-1">
+                <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                  <img src={attachedImage} alt="" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={removeImage}
+                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
                 <textarea
                   value={form.initPrompt}
                   onChange={(e) => setForm(prev => ({ ...prev, initPrompt: e.target.value }))}
-              placeholder={currentLanguage === 'zh' ? '一句话生成网站：例如 创建一个个人作品集网站，包含首页、项目、关于我、联系方式，深色科技风，支持移动端。' : 'One sentence to build: e.g., Create a personal portfolio site with Home, Projects, About, Contact; dark tech style; responsive.'}
-              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none shadow-sm"
+              placeholder={currentLanguage === 'zh' ? '一句话生成网站：例如 创建一个个人作品集网站，包含首页、项目、关于我、联系方式，深色科技风，支持移动端。可上传一张参考图。' : 'One sentence to build your site. You can also attach one reference image.'}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 pb-14 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none shadow-sm"
               rows={5}
                   maxLength={8000}
                   required
@@ -231,13 +320,35 @@ export const NewAppPage: React.FC = () => {
                   }
                 }}
                 />
-            <button
-              type="submit"
-              disabled={creating || !form.initPrompt.trim()}
-              className="absolute bottom-3 right-3 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              {creating ? (currentLanguage === 'zh' ? '创建中...' : 'Creating...') : (currentLanguage === 'zh' ? '创建应用' : 'Create App')}
-            </button>
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImages}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-50 transition-colors"
+                >
+                  <ImagePlus size={16} />
+                  {uploadingImages
+                    ? (currentLanguage === 'zh' ? '读取中...' : 'Reading...')
+                    : (currentLanguage === 'zh' ? '上传图片' : 'Upload')}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePickImages}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={creating || uploadingImages || !form.initPrompt.trim()}
+                className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                {creating ? (currentLanguage === 'zh' ? '创建中...' : 'Creating...') : (currentLanguage === 'zh' ? '创建应用' : 'Create App')}
+              </button>
+            </div>
               </div>
 
           {/* 示例提示词（以气泡/按钮样式展示） */}

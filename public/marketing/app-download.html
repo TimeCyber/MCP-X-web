@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>一休AI - 下载</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Microsoft YaHei", Arial, sans-serif;
+      background: #f5f8ff;
+      color: #333;
+    }
+    .box {
+      text-align: center;
+      padding: 24px;
+      max-width: 420px;
+    }
+    a {
+      display: inline-block;
+      margin: 8px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      background: #2f6bff;
+      color: #fff;
+      text-decoration: none;
+    }
+    .sub {
+      color: #666;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>正在跳转到下载页…</h2>
+    <p class="sub">若未自动跳转，请手动选择：</p>
+    <p>
+      <a id="iosLink" href="https://apps.apple.com/cn/app/%E4%B8%80%E4%BC%91ai/id6772460292">iOS 下载</a>
+      <a id="harmonyLink" href="https://appgallery.huawei.com/app/detail?id=C6917591060932315040">鸿蒙下载</a>
+    </p>
+  </div>
+  <script>
+    (function () {
+      var iosUrl = 'https://apps.apple.com/cn/app/%E4%B8%80%E4%BC%91ai/id6772460292';
+      var harmonyUrl = 'https://appgallery.huawei.com/app/detail?id=C6917591060932315040';
+      var ua = navigator.userAgent || '';
+
+      // iPhone / iPad / iPod / iPadOS（部分 iPad 会报 Macintosh）
+      var isIOS =
+        /iPhone|iPad|iPod/i.test(ua) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+      // 鸿蒙 / 华为 / 荣耀
+      var isHarmony =
+        /HarmonyOS|OpenHarmony|Huawei|HUAWEI|HONOR|Harmony/i.test(ua);
+
+      if (isIOS) {
+        location.replace(iosUrl);
+        return;
+      }
+      if (isHarmony) {
+        location.replace(harmonyUrl);
+        return;
+      }
+      // 其他设备不自动跳转，展示双入口
+    })();
+  </script>
+</body>
+</html>

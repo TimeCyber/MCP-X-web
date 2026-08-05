@@ -132,6 +132,13 @@ const ChatPageContent: React.FC = React.memo(() => {
   const [internetEnabled] = useState<boolean>(false);
   const [friendlyModeEnabled, setFriendlyModeEnabled] = useState<boolean>(false);
   const [isMcpEnabled, setIsMcpEnabled] = useState<boolean>(false);
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('chat_voice_enabled') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [showMcpManager, setShowMcpManager] = useState<boolean>(false);
   const [mcpSelectedIds, setMcpSelectedIds] = useState<string[]>([]);
   const [mcpConfigMap, setMcpConfigMap] = useState<Record<string, any>>({});
@@ -1097,6 +1104,8 @@ const ChatPageContent: React.FC = React.memo(() => {
             agent: agentId || undefined,
             kid: selectedKnowledge?.id?.toString() || undefined,
             internet: internetEnabled,
+            voice: voiceEnabled,
+            voiceName: 'longfeifei_v3',
             appId: 'mcpx-chat'
           },
           files,
@@ -1286,6 +1295,8 @@ const ChatPageContent: React.FC = React.memo(() => {
             agent: agentId || undefined,
             kid: selectedKnowledge?.id?.toString() || undefined,
             internet: internetEnabled,
+            voice: voiceEnabled,
+            voiceName: 'longfeifei_v3',
             appId:"mcpx-chat"
           },
           (chunk: any) => {
@@ -1494,6 +1505,17 @@ const ChatPageContent: React.FC = React.memo(() => {
   // 切换友好模式
   const handleToggleFriendly = () => {
     setFriendlyModeEnabled(prev => !prev);
+  };
+
+  // 切换语音回复
+  const handleToggleVoice = () => {
+    setVoiceEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('chat_voice_enabled', next ? '1' : '0');
+      } catch {}
+      return next;
+    });
   };
 
   // 切换 MCP 功能
@@ -2037,6 +2059,8 @@ const ChatPageContent: React.FC = React.memo(() => {
 
                 friendlyEnabled={friendlyModeEnabled}
                 onToggleFriendly={handleToggleFriendly}
+                voiceEnabled={voiceEnabled}
+                onToggleVoice={handleToggleVoice}
                 onInput={() => {
                   setShowReferenceLinks(false);
                   setShowReferenceImages(false);

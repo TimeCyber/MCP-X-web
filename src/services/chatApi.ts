@@ -78,6 +78,10 @@ export interface SendDTO {
   role?: string;
   uuid?: number;
   agent?: string; // 添加agent参数
+  /** 开启后服务端返回语音，内容中含 <audio> 标签 */
+  voice?: boolean;
+  /** 语音音色名称，如 longfeifei_v3 */
+  voiceName?: string;
 }
 
 export interface ChatMessageVo {
@@ -280,6 +284,11 @@ export const streamChatSendWithFiles = async (
     if (data.uuid) formData.append('uuid', data.uuid.toString());
     if (data.agent) formData.append('agent', data.agent);
     if (data.internet !== undefined) formData.append('internet', data.internet.toString());
+    if (data.voice !== undefined) formData.append('voice', data.voice.toString());
+    if (data.voiceName) formData.append('voiceName', data.voiceName);
+    if (data.isMcp !== undefined) formData.append('isMcp', data.isMcp.toString());
+    if (data.deepResearch !== undefined) formData.append('deepResearch', data.deepResearch.toString());
+    if (data.mcpConfig !== undefined) formData.append('mcpConfig', JSON.stringify(data.mcpConfig));
 
     const response = await fetch(url, {
       method: 'POST',

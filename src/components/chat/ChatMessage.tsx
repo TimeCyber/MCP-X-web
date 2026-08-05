@@ -170,6 +170,38 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
     }
   };
 
+  // 解析 <audio> 标签，提取语音 URL
+  const parseAudio = (content: string): { cleanContent: string; audioUrls: string[] } => {
+    try {
+      const audioUrls: string[] = [];
+      // <audio src="..."></audio> 或 <audio ... src='...'>
+      const srcAttrRegex = /<audio\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<\/audio>/gi;
+      let match;
+      while ((match = srcAttrRegex.exec(content)) !== null) {
+        const url = (match[1] || '').trim();
+        if (url) audioUrls.push(url);
+      }
+      // <audio>https://...</audio>
+      const bodyRegex = /<audio\b[^>]*>\s*(https?:\/\/[^<\s]+)\s*<\/audio>/gi;
+      while ((match = bodyRegex.exec(content)) !== null) {
+        const url = (match[1] || '').trim();
+        if (url && !audioUrls.includes(url)) audioUrls.push(url);
+      }
+      // <audio ...><source src="..."></audio>
+      const sourceRegex = /<audio\b[^>]*>[\s\S]*?<source\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<\/audio>/gi;
+      while ((match = sourceRegex.exec(content)) !== null) {
+        const url = (match[1] || '').trim();
+        if (url && !audioUrls.includes(url)) audioUrls.push(url);
+      }
+      const cleanContent = content
+        .replace(/<audio\b[^>]*>[\s\S]*?<\/audio>/gi, '')
+        .trim();
+      return { cleanContent, audioUrls };
+    } catch {
+      return { cleanContent: content, audioUrls: [] };
+    }
+  };
+
   // 解析引用链接，提取 ref 编号和对应的 URL 映射
   const parseReferenceUrls = (content: string): Map<string, string> => {
     const refMap = new Map<string, string>();
@@ -215,15 +247,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
     return refMap;
   };
 
-  const { visibleContent, thinkContent, imageUrls, referenceUrls } = React.useMemo(() => {
+  const { visibleContent, thinkContent, imageUrls, audioUrls, referenceUrls } = React.useMemo(() => {
     const content = message.content || '';
     // 先解析引用链接
     const referenceUrls = parseReferenceUrls(content);
     // 再解析 think 标签
     const { visibleContent: afterThink, thinkContent } = parseThink(content);
     // 再解析 images 标签
-    const { cleanContent: visibleContent, imageUrls } = parseImages(afterThink);
-    return { visibleContent, thinkContent, imageUrls, referenceUrls };
+    const { cleanContent: afterImages, imageUrls } = parseImages(afterThink);
+    // 再解析 audio 标签
+    const { cleanContent: visibleContent, audioUrls } = parseAudio(afterImages);
+    return { visibleContent, thinkContent, imageUrls, audioUrls, referenceUrls };
   }, [message.content]);
 
   // 流式时展开，完成后默认折叠
@@ -493,6 +527,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
             </div>
           ))}
         </div>
+      </div>
+    );
+  };
+
+  // 渲染解析出的语音（服务端 <audio> 标签）
+  const renderParsedAudios = () => {
+    if (!audioUrls || audioUrls.length === 0) return null;
+    return (
+      <div className="mt-3 space-y-2">
+        {audioUrls.map((url, index) => (
+          <audio
+            key={`${url}-${index}`}
+            controls
+            preload="metadata"
+            src={url}
+            className="w-full max-w-md"
+          >
+            您的浏览器不支持音频播放
+          </audio>
+        ))}
       </div>
     );
   };
@@ -952,6 +1006,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
               </div>
               {/* 渲染解析出的图片 */}
               {renderParsedImages()}
+              {renderParsedAudios()}
             </div>
           ) : (
             // AI消息使用Markdown渲染
@@ -1075,6 +1130,20 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
                     h3: ({ children }) => <h3 className="text-sm font-bold mb-2">{children}</h3>,
                     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
                     em: ({ children }) => <em className="italic">{children}</em>,
+                    audio: ({ src, children, ...props }: any) => {
+                      const childText = Array.isArray(children)
+                        ? children.map((c) => (typeof c === 'string' ? c : '')).join('')
+                        : typeof children === 'string'
+                          ? children
+                          : '';
+                      const url = (src || childText || '').trim();
+                      if (!url) return null;
+                      return (
+                        <audio controls preload="metadata" src={url} className="w-full max-w-md my-2" {...props}>
+                          您的浏览器不支持音频播放
+                        </audio>
+                      );
+                    },
                     a: ({ href, children }) => {
                       const handleLinkClick = (e: React.MouseEvent) => {
                         e.preventDefault();
@@ -1129,6 +1198,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isTyping, age
               {renderWebSearchResults()}
               {/* 渲染解析出的图片 */}
               {renderParsedImages()}
+              {renderParsedAudios()}
             </div>
           )}
         </div>
