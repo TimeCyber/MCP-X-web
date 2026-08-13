@@ -29,6 +29,10 @@ export interface ImageElement extends CanvasElementBase {
   borderRadius?: number;
   image?: HTMLImageElement; // 存储加载完成的图片对象
   videoPrompt?: string; // 图生视频的提示词，每个图片独立保存
+  /** 生成中 / 失败占位状态（成功后清除） */
+  generationStatus?: 'generating' | 'failed';
+  generationProgress?: { message: string; current?: number; total?: number };
+  generationError?: string;
 }
 
 export interface PathElement extends CanvasElementBase {
@@ -85,6 +89,10 @@ export interface VideoElement extends CanvasElementBase {
     thumbnailUrl?: string;
     video?: HTMLVideoElement;
     isPlaying?: boolean; // 是否正在播放
+    /** 生成中 / 失败占位状态（成功后清除） */
+    generationStatus?: 'generating' | 'failed';
+    generationProgress?: { message: string; current?: number; total?: number };
+    generationError?: string;
 }
 
 export type Element = ImageElement | PathElement | ShapeElement | TextElement | ArrowElement | LineElement | GroupElement | VideoElement;

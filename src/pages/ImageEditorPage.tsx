@@ -376,6 +376,103 @@ const getVideoPlaceholderSize = (ratio: '16:9' | '9:16' | '1:1'): { width: numbe
   }
 };
 
+
+/** 绘制图片/视频生成占位：进度或失败 */
+const drawGenerationPlaceholder = (
+  ctx: CanvasRenderingContext2D,
+  el: { x: number; y: number; width: number; height: number },
+  opts: {
+    title: string;
+    status?: 'generating' | 'failed';
+    progress?: { message: string; current?: number; total?: number };
+    error?: string;
+    accent?: string;
+  }
+) => {
+  const { x, y, width, height } = el;
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+  const accent = opts.accent || '#3b82f6';
+  const isFailed = opts.status === 'failed';
+
+  ctx.fillStyle = isFailed ? '#1f1215' : '#0f172a';
+  ctx.fillRect(x, y, width, height);
+
+  if (!isFailed) {
+    const time = Date.now() / 1000;
+    const gradient = ctx.createRadialGradient(
+      centerX + Math.cos(time) * width * 0.1,
+      centerY + Math.sin(time) * height * 0.1,
+      0,
+      centerX,
+      centerY,
+      Math.max(width, height) * 0.6
+    );
+    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
+    gradient.addColorStop(0.5, 'rgba(99, 102, 241, 0.12)');
+    gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, width, height);
+
+    const radius = Math.min(width, height) * 0.18;
+    const startAngle = time * 2;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(6, width * 0.018);
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, startAngle, startAngle + Math.PI * 1.5);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    const titleFontSize = Math.max(18, width * 0.055);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${titleFontSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText(opts.title, centerX, centerY - radius - 24);
+
+    const msg = opts.progress?.message || '请稍候...';
+    const progressFontSize = Math.max(12, width * 0.035);
+    ctx.fillStyle = '#93c5fd';
+    ctx.font = `${progressFontSize}px Arial`;
+    ctx.fillText(msg, centerX, centerY + radius + 36);
+
+    if (opts.progress?.current != null && opts.progress?.total) {
+      const ratio = Math.max(0, Math.min(1, opts.progress.current / opts.progress.total));
+      const barW = width * 0.6;
+      const barH = Math.max(4, height * 0.015);
+      const barX = centerX - barW / 2;
+      const barY = centerY + radius + 56;
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = accent;
+      ctx.fillRect(barX, barY, barW * ratio, barH);
+    }
+  } else {
+    const titleFontSize = Math.max(18, width * 0.055);
+    ctx.fillStyle = '#fca5a5';
+    ctx.font = `bold ${titleFontSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.fillText('生成失败', centerX, centerY - 12);
+    const err = opts.error || '请删除后重试';
+    const errFont = Math.max(12, width * 0.032);
+    ctx.fillStyle = '#fecaca';
+    ctx.font = `${errFont}px Arial`;
+    // 简单截断过长错误
+    const maxChars = Math.max(12, Math.floor(width / (errFont * 0.6)));
+    const shown = err.length > maxChars ? err.slice(0, maxChars - 1) + '…' : err;
+    ctx.fillText(shown, centerX, centerY + 18);
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = `${Math.max(11, width * 0.028)}px Arial`;
+    ctx.fillText('可选中后按 Delete 删除', centerX, centerY + 42);
+  }
+
+  ctx.strokeStyle = isFailed ? '#ef4444' : accent;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+  ctx.textAlign = 'left';
+};
+
 const getElementBounds = (element: Element, allElements: Element[] = []): { x: number; y: number; width: number; height: number } => {
   if (element.type === 'group') {
     const children = allElements.filter(el => el.parentId === element.id);
@@ -553,7 +650,16 @@ const drawElement = (ctx: CanvasRenderingContext2D, element: Element, offsetX: n
 
   switch (element.type) {
     case 'image': {
-      if (element.image) {
+      const imgEl = element as ImageElement;
+      if (imgEl.generationStatus === 'generating' || imgEl.generationStatus === 'failed') {
+        drawGenerationPlaceholder(ctx, imgEl, {
+          title: '图片生成中',
+          status: imgEl.generationStatus,
+          progress: imgEl.generationProgress,
+          error: imgEl.generationError,
+          accent: '#3b82f6',
+        });
+      } else if (element.image) {
         const borderRadius = (element as any).borderRadius || 0;
         if (borderRadius > 0) {
           ctx.beginPath();
@@ -561,7 +667,7 @@ const drawElement = (ctx: CanvasRenderingContext2D, element: Element, offsetX: n
           ctx.clip();
         }
         ctx.drawImage(element.image, element.x, element.y, element.width, element.height);
-      } else if ((element as ImageElement).href) {
+      } else if (imgEl.href) {
         ctx.fillStyle = '#1f2937';
         ctx.fillRect(element.x, element.y, element.width, element.height);
         ctx.fillStyle = '#9ca3af';
@@ -613,28 +719,13 @@ const drawElement = (ctx: CanvasRenderingContext2D, element: Element, offsetX: n
         ctx.lineWidth = 2;
         ctx.strokeRect(element.x, element.y, element.width, element.height);
       } else {
-        ctx.fillStyle = '#1a1a1a';
-        ctx.fillRect(element.x, element.y, element.width, element.height);
-        
-        const radius = Math.min(element.width, element.height) * 0.1;
-        ctx.strokeStyle = '#6366f1';
-        ctx.lineWidth = 4;
-        ctx.lineCap = 'round';
-        ctx.globalAlpha = 0.8;
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 1.5);
-        ctx.stroke();
-        
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = '#6366f1';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(element.x, element.y, element.width, element.height);
-        
-        ctx.fillStyle = '#6366f1';
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('视频生成中...', centerX, centerY + radius + 25);
-        ctx.textAlign = 'left';
+        drawGenerationPlaceholder(ctx, element, {
+          title: '视频生成中',
+          status: element.generationStatus === 'failed' ? 'failed' : 'generating',
+          progress: element.generationProgress,
+          error: element.generationError,
+          accent: '#8b5cf6',
+        });
       }
       
       break;
@@ -790,7 +881,20 @@ const ImageEditorPage: React.FC = () => {
     const serialize = (dropBase64: boolean) =>
       boardsToSave.map(board => ({
         ...board,
-        elements: board.elements.map(el => {
+        elements: board.elements
+          // 进行中的生成占位不落缓存，刷新后由用户重新发起即可
+          .filter(el => {
+            if (el.type === 'image') {
+              const img = el as ImageElement;
+              if (img.generationStatus === 'generating' && !img.href) return false;
+            }
+            if (el.type === 'video') {
+              const v = el as VideoElement;
+              if (v.generationStatus === 'generating' && !v.videoUrl) return false;
+            }
+            return true;
+          })
+          .map(el => {
           const base = {
             ...el,
             image: undefined,
@@ -1154,7 +1258,6 @@ const ImageEditorPage: React.FC = () => {
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [drawingOptions, setDrawingOptions] = useState({ strokeColor: '#000000', strokeWidth: 20 });
   const [isLoading, setIsLoading] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [isInputFocused, setIsInputFocused] = useState(false);
   const floatingPromptInputCardRef = useRef<HTMLDivElement>(null);
@@ -1185,6 +1288,11 @@ const ImageEditorPage: React.FC = () => {
   const panRef = useRef({ x: 0, y: 0 }); // 用于在事件处理中获取最新的pan值，避免闭包问题
   const zoomRef = useRef(0.25);
   const canvasSizeRef = useRef({ width: window.innerWidth, height: window.innerHeight });
+  /** 平移拖拽：用 CSS translate 跟手，避免每帧 setState 重绘整页 */
+  const isPanningRef = useRef(false);
+  const panDragOriginRef = useRef<Point | null>(null);
+  const panAtDragStartRef = useRef({ x: 0, y: 0 });
+  const panSurfaceRef = useRef<HTMLDivElement>(null);
   const [croppingState, setCroppingState] = useState<{ elementId: string; originalElement: ImageElement; cropBox: Rect } | null>(null);
   const [isCropDragging, setIsCropDragging] = useState(false);
   const [cropDragHandle, setCropDragHandle] = useState<string | null>(null);
@@ -1242,6 +1350,8 @@ const ImageEditorPage: React.FC = () => {
   const [selectedStartImage, setSelectedStartImage] = useState<ImageElement | null>(null);
   const [selectedEndImage, setSelectedEndImage] = useState<ImageElement | null>(null);
   const [generateMode, setGenerateMode] = useState<'image' | 'video'>('image'); // 生成模式：图片或视频
+  /** 并发生成占位错开，避免叠在同一点 */
+  const genPlacementOffsetRef = useRef(0);
 
   // 调整大小相关状态
   const [isResizing, setIsResizing] = useState(false);
@@ -2055,6 +2165,35 @@ const ImageEditorPage: React.FC = () => {
     loadVideoModels();
   }, [loadVideoModels]);
 
+
+  // 图片占位显示尺寸（按选中分辨率等比缩放到画布）
+  const getImagePlaceholderSize = () => {
+    const size = selectedImageSizeRef.current || { width: 1024, height: 1024 };
+    const maxDisplay = 512;
+    let w = size.width || 512;
+    let h = size.height || 512;
+    if (w > maxDisplay || h > maxDisplay) {
+      const scale = Math.min(maxDisplay / w, maxDisplay / h);
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+    }
+    return { width: w, height: h };
+  };
+
+  const nextGenPlacement = (width: number, height: number) => {
+    const offset = (genPlacementOffsetRef.current++ % 6) * 48;
+    const { x, y } = getViewportCenterPlacement(width, height);
+    return { x: x + offset, y: y + offset };
+  };
+
+  const patchElementById = (id: string, patch: Partial<ImageElement> | Partial<VideoElement>) => {
+    setElements(prev => {
+      const newElements = prev.map(el => (el.id === id ? { ...el, ...patch } as Element : el));
+      setTimeout(() => saveToHistory(newElements), 0);
+      return newElements;
+    });
+  };
+
   // 自动视频生成功能 - 从 CreatorHubPage 跳转过来时处理视频生成
   const handleAutoVideoGeneration = useCallback(async (state: any) => {
     if (!state.firstFrameImage && !state.lastFrameImage && !state.initialPrompt?.trim()) {
@@ -2155,7 +2294,7 @@ const ImageEditorPage: React.FC = () => {
       // 创建空白视频占位元素（始终落在当前视口中心，与是否有首帧无关）
       const placeholderSize = getVideoPlaceholderSize((state.ratio as '16:9' | '9:16' | '1:1') || '16:9');
       videoElementId = generateId();
-      const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
+      const { x: videoX, y: videoY } = nextGenPlacement(placeholderSize.width, placeholderSize.height);
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
@@ -2163,13 +2302,14 @@ const ImageEditorPage: React.FC = () => {
         y: videoY,
         width: placeholderSize.width,
         height: placeholderSize.height,
-        videoUrl: undefined, // 占位，还没有视频URL
+        videoUrl: undefined,
         href: undefined,
         visible: true,
-        locked: false
+        locked: false,
+        generationStatus: 'generating',
+        generationProgress: { message: '正在初始化视频生成...' },
       };
 
-      // 将图片和视频占位元素添加到画布
       setElements(prev => {
         const newElements = [...prev];
         if (startImageElement) newElements.push(startImageElement);
@@ -2179,9 +2319,6 @@ const ImageEditorPage: React.FC = () => {
         return newElements;
       });
 
-      // 开始生成视频
-      setIsGeneratingVideo(true);
-      setVideoProgress({ message: '正在初始化视频生成...' });
       setGeneratedVideoUrl(null);
 
       // 转换时长格式
@@ -2202,9 +2339,15 @@ const ImageEditorPage: React.FC = () => {
         duration,
         currentSessionId, // sessionId，确保结果归档到当前画布会话
         (progress: any) => {
-          setVideoProgress(progress);
+          if (!videoElementId) return;
+          patchElementById(videoElementId, {
+            generationStatus: 'generating',
+            generationProgress: typeof progress === 'string'
+              ? { message: progress }
+              : { message: progress?.message || '视频生成中...', current: progress?.current, total: progress?.total },
+          });
         },
-        state.audio ?? true // 默认开启音频；CreatorHub 可显式传入 audio
+        state.audio ?? true
       );
 
       if (result.videoUrl) {
@@ -2258,7 +2401,10 @@ const ImageEditorPage: React.FC = () => {
                   videoUrl: actualVideoUrl,
                   href: actualVideoUrl,
                   video: video,
-                  isPlaying: false
+                  isPlaying: false,
+                  generationStatus: undefined,
+                  generationProgress: undefined,
+                  generationError: undefined,
                 } as VideoElement;
               }
               return el;
@@ -2287,12 +2433,11 @@ const ImageEditorPage: React.FC = () => {
       setVideoProgress({ message: '视频生成失败' });
       toast.error(error.message || '视频生成失败，请重试');
       
-      // 删除空白的视频占位元素（如果已创建）
       if (videoElementId) {
-        setElements(prev => {
-          const newElements = prev.filter(el => el.id !== videoElementId);
-          setTimeout(() => saveToHistory(newElements), 0);
-          return newElements;
+        patchElementById(videoElementId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: (error && error.message) || '视频生成失败',
         });
       }
     } finally {
@@ -2490,8 +2635,18 @@ const ImageEditorPage: React.FC = () => {
           const sessionId = session.id?.toString() || session.id;
           const boardName = session.sessionTitle || `Board ${index + 1}`;
           const localBoard = bySessionId.get(sessionId);
+          const serverLooksDefault =
+            !session.sessionTitle ||
+            /^Board\s+\d+$/i.test(String(session.sessionTitle)) ||
+            session.sessionTitle === 'Main Board';
+          // 服务端仍是默认名时保留本地已改名，避免改名请求尚未落库时被冲掉
           return localBoard
-            ? { ...localBoard, id: sessionId, sessionId, name: boardName }
+            ? {
+                ...localBoard,
+                id: sessionId,
+                sessionId,
+                name: serverLooksDefault && localBoard.name ? localBoard.name : boardName,
+              }
             : { id: sessionId, sessionId, name: boardName, elements: [] };
         });
 
@@ -2846,8 +3001,11 @@ const ImageEditorPage: React.FC = () => {
     if (activeTool === 'pan') {
       // 使用屏幕坐标进行pan操作
       setIsPanning(true);
+      isPanningRef.current = true;
       const startPos = { x: e.clientX, y: e.clientY };
-      panStartPosRef.current = startPos; // 同时更新ref
+      panStartPosRef.current = startPos;
+      panDragOriginRef.current = startPos;
+      panAtDragStartRef.current = { ...panRef.current };
       setPanStartPos(startPos);
       return;
     }
@@ -2947,8 +3105,11 @@ const ImageEditorPage: React.FC = () => {
         setLastClickTime(0);
         // 开始拖动画布
         setIsPanning(true);
+        isPanningRef.current = true;
         const startPos = { x: e.clientX, y: e.clientY };
-        panStartPosRef.current = startPos; // 同时更新ref
+        panStartPosRef.current = startPos;
+        panDragOriginRef.current = startPos;
+        panAtDragStartRef.current = { ...panRef.current };
         setPanStartPos(startPos);
       }
       return;
@@ -3161,22 +3322,19 @@ const ImageEditorPage: React.FC = () => {
   // Handle mouse move for drawing
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isPanning) {
-      // 使用ref获取最新的panStartPos值，避免闭包问题
-      const startPos = panStartPosRef.current;
-      const deltaX = e.clientX - startPos.x;
-      const deltaY = e.clientY - startPos.y;
-
-      // 直接更新pan值和ref
-      const newPan = {
-        x: panRef.current.x + deltaX,
-        y: panRef.current.y + deltaY
+      const origin = panDragOriginRef.current;
+      if (!origin) return;
+      const dx = e.clientX - origin.x;
+      const dy = e.clientY - origin.y;
+      // 仅用 CSS 跟手平移，不触发 React 重绘
+      if (panSurfaceRef.current) {
+        panSurfaceRef.current.style.transform = `translate(${dx}px, ${dy}px)`;
+      }
+      // 同步逻辑 pan，供松手后提交；getMousePos 在平移中很少用到
+      panRef.current = {
+        x: panAtDragStartRef.current.x + dx,
+        y: panAtDragStartRef.current.y + dy,
       };
-      panRef.current = newPan; // 立即更新ref
-      setPan(newPan); // 触发重新渲染
-      
-      // 更新起始位置
-      panStartPosRef.current = { x: e.clientX, y: e.clientY };
-      setPanStartPos({ x: e.clientX, y: e.clientY });
       return;
     }
 
@@ -3379,6 +3537,14 @@ const ImageEditorPage: React.FC = () => {
     const mousePos = getMousePos(e);
 
     if (isPanning) {
+      isPanningRef.current = false;
+      panDragOriginRef.current = null;
+      if (panSurfaceRef.current) {
+        panSurfaceRef.current.style.transform = '';
+      }
+      // 提交最终 pan，只触发一次重绘
+      const finalPan = { ...panRef.current };
+      setPan(finalPan);
       setIsPanning(false);
     }
     if (isResizing) {
@@ -3590,14 +3756,13 @@ const ImageEditorPage: React.FC = () => {
     }
   };
 
-  // Handle text-to-image generation
+  // Handle text-to-image generation（立即占位，支持并发生成）
   const handleGenerateImage = async (originalPrompt: string, modelIdOverride?: string) => {
     if (!originalPrompt.trim()) {
       toast.error('请输入提示词');
       return;
     }
 
-    // 检查登录状态
     const userId = localStorage.getItem('userId');
     const token = localStorage.getItem('token');
     if (!userId || !token) {
@@ -3608,100 +3773,132 @@ const ImageEditorPage: React.FC = () => {
       return;
     }
 
-    setIsGenerating(true);
+    const phSize = getImagePlaceholderSize();
+    const { x, y } = nextGenPlacement(phSize.width, phSize.height);
+    const placeholderId = generateId();
+    const placeholder: ImageElement = {
+      id: placeholderId,
+      type: 'image',
+      x,
+      y,
+      width: phSize.width,
+      height: phSize.height,
+      mimeType: 'image/png',
+      visible: true,
+      locked: false,
+      generationStatus: 'generating',
+      generationProgress: { message: '正在生成图片...' },
+    };
+    setElements(prev => {
+      const newElements = [...prev, placeholder];
+      setTimeout(() => saveToHistory(newElements), 0);
+      return newElements;
+    });
+    setSelectedElementIds([placeholderId]);
+
     try {
-      // 处理@功能：替换prompt和构建referenceMaterials
       const processedPrompt = processPromptForBackend(originalPrompt);
       const referenceMaterials = await buildReferenceMaterials(originalPrompt);
-
-      // 优先使用外部传入的 modelIdOverride（如从 CreatorHub 跳转时携带的模型）
       const activeModelId = modelIdOverride || selectedModel;
       const selectedModelInfo = models.find(model => model.id === activeModelId);
       const modelName = selectedModelInfo?.modelName;
+
+      patchElementById(placeholderId, {
+        generationProgress: { message: '模型生成中，请稍候...' },
+      });
+
       const result = await generateImageFromText(
         processedPrompt,
         modelName,
         currentSessionId,
-        selectedImageSizeRef.current,  // 读 ref，确保拿到最新值
+        selectedImageSizeRef.current,
         undefined,
         referenceMaterials
       );
 
-      // 解析图片URL - 优先 base64 / 永久 OSS，避免缓存 volces 临时签名链接
-      let imageSrc = resolveStableImageHref(result);
+      const imageSrc = resolveStableImageHref(result);
+      if (!imageSrc) {
+        const errMsg = result.textResponse?.includes('余额不足')
+          ? result.textResponse
+          : (result.textResponse || '图片生成失败');
+        patchElementById(placeholderId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: errMsg,
+        });
+        toast.error(errMsg);
+        return;
+      }
 
-      if (imageSrc) {
-        // 辅助函数：创建图片元素（img 可选，无 img 时由 hydrate 异步加载）
-        const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
-          const w = img?.width || 512;
-          const h = img?.height || 512;
-          const { x, y } = getViewportCenterPlacement(w, h);
+      patchElementById(placeholderId, {
+        generationProgress: { message: '加载图片中...' },
+      });
 
-          const newElement: ImageElement = {
-            id: generateId(),
-            type: 'image',
-            x,
-            y,
-            width: w,
-            height: h,
-            href,
-            mimeType: 'image/png',
-            ...(img ? { image: img } : {}),
-            visible: true,
-            locked: false
-          };
-          setElements(prev => {
-            const newElements = [...prev, newElement];
-            setTimeout(() => saveToHistory(newElements), 0);
-            return newElements;
-          });
-          setSelectedElementIds([newElement.id]);
-          setAtMentionedElements([]);
-          toast.success('图片生成成功');
-        };
-
-        const img = await loadMediaImage(imageSrc);
-        if (img) {
-          appendImageElement(imageSrc, img);
-        } else if (isPermanentMediaUrl(imageSrc)) {
-          // 接口已成功返回 OSS，解码失败时先占位，由 hydrate 异步加载
-          appendImageElement(imageSrc);
-        } else {
-          console.error('Image load failed');
-          if (result.textResponse?.includes('余额不足')) {
-            toast.error(result.textResponse);
-          } else {
-            toast.error('图片加载失败，请刷新后重试');
-          }
+      const img = await loadMediaImage(imageSrc);
+      if (img) {
+        const maxDisplaySize = 800;
+        let w = img.naturalWidth || img.width || phSize.width;
+        let h = img.naturalHeight || img.height || phSize.height;
+        if (w > maxDisplaySize || h > maxDisplaySize) {
+          const scale = Math.min(maxDisplaySize / w, maxDisplaySize / h);
+          w *= scale;
+          h *= scale;
         }
+        patchElementById(placeholderId, {
+          href: imageSrc,
+          image: img,
+          width: w,
+          height: h,
+          generationStatus: undefined,
+          generationProgress: undefined,
+          generationError: undefined,
+        });
+        setAtMentionedElements([]);
+        toast.success('图片生成成功');
+      } else if (isPermanentMediaUrl(imageSrc)) {
+        patchElementById(placeholderId, {
+          href: imageSrc,
+          generationStatus: undefined,
+          generationProgress: undefined,
+          generationError: undefined,
+        });
+        setAtMentionedElements([]);
+        toast.success('图片生成成功');
       } else {
-        if (result.textResponse?.includes('余额不足')) {
-          toast.error(result.textResponse);
-        } else {
-          toast.error(result.textResponse || '图片生成失败');
-        }
+        const errMsg = result.textResponse?.includes('余额不足')
+          ? result.textResponse!
+          : '图片加载失败，请刷新后重试';
+        patchElementById(placeholderId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: errMsg,
+        });
+        toast.error(errMsg);
       }
     } catch (error: any) {
       console.error('Image generation failed:', error);
-      if (error.message === '用户未登录') {
-        toast.error('登录已过期，请重新登录');
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
+      const errMsg = error?.message === '用户未登录'
+        ? '登录已过期，请重新登录'
+        : (error?.message || '图片生成失败');
+      patchElementById(placeholderId, {
+        generationStatus: 'failed',
+        generationProgress: undefined,
+        generationError: errMsg,
+      });
+      if (error?.message === '用户未登录') {
+        toast.error(errMsg);
+        setTimeout(() => { window.location.href = '/login'; }, 1500);
       } else {
-        toast.error(error.message || '图片生成失败');
+        toast.error(errMsg);
       }
-    } finally {
-      setIsGenerating(false);
     }
   };
 
-  // Handle image editing
+  // Handle image editing（立即占位，支持并发生成）
   const handleEditImage = async (prompt: string) => {
-    // 按用户选中的顺序排列图片（selectedElementIds 记录了点击顺序）
     const selectedImages = selectedElementIds
       .map(id => currentElements.find(el => el.id === id && el.type === 'image'))
-      .filter((el): el is ImageElement => !!el);
+      .filter((el): el is ImageElement => !!el && el.generationStatus !== 'generating');
 
     if (selectedImages.length === 0) {
       toast.error('请选择要编辑的图片');
@@ -3713,7 +3910,6 @@ const ImageEditorPage: React.FC = () => {
       return;
     }
 
-    // 检查登录状态
     const userId = localStorage.getItem('userId');
     const token = localStorage.getItem('token');
     if (!userId || !token) {
@@ -3724,31 +3920,48 @@ const ImageEditorPage: React.FC = () => {
       return;
     }
 
-    setIsGenerating(true);
+    const phSize = getImagePlaceholderSize();
+    const { x, y } = nextGenPlacement(phSize.width, phSize.height);
+    const placeholderId = generateId();
+    const placeholder: ImageElement = {
+      id: placeholderId,
+      type: 'image',
+      x,
+      y,
+      width: phSize.width,
+      height: phSize.height,
+      mimeType: 'image/png',
+      visible: true,
+      locked: false,
+      generationStatus: 'generating',
+      generationProgress: { message: '正在编辑图片...' },
+    };
+    setElements(prev => {
+      const newElements = [...prev, placeholder];
+      setTimeout(() => saveToHistory(newElements), 0);
+      return newElements;
+    });
+    setSelectedElementIds([placeholderId]);
+
     try {
-      // 准备图片数据 - 检查是否有标注需要合并
       const imagesData = await Promise.all(selectedImages.map(async (img) => {
-        // 检查是否有属于该图片的标注
-        const annotations = currentElements.filter(el => 
-          el.id !== img.id && 
+        const annotations = currentElements.filter(el =>
+          el.id !== img.id &&
           (el.locked || el.name === 'annotation' || el.name === 'eraser_path')
         );
 
         const hasAnnotations = annotations.some(anno => {
           const bounds = getElementBounds(anno, currentElements);
-          const intersects = !(bounds.x > img.x + img.width || 
-                               bounds.x + bounds.width < img.x || 
-                               bounds.y > img.y + img.height || 
-                               bounds.y + img.height < img.y);
-          return intersects;
+          return !(bounds.x > img.x + img.width ||
+            bounds.x + bounds.width < img.x ||
+            bounds.y > img.y + img.height ||
+            bounds.y + bounds.height < img.y);
         });
 
-        // 如果没有标注，直接使用原图 URL
         if (!hasAnnotations) {
           return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
         }
 
-        // 如果有标注，尝试合并（仅对 base64 图片）
         if (img.href && img.href.startsWith('data:')) {
           try {
             const canvas = document.createElement('canvas');
@@ -3756,104 +3969,112 @@ const ImageEditorPage: React.FC = () => {
             canvas.height = img.height;
             const ctx = canvas.getContext('2d');
             if (!ctx) return { href: img.href || '', mimeType: 'image/png' };
-
-            // 绘制原图
             if (img.image) {
               ctx.drawImage(img.image, 0, 0, img.width, img.height);
             }
-
-            // 绘制标注
             annotations.forEach(anno => {
               const bounds = getElementBounds(anno, currentElements);
-              const intersects = !(bounds.x > img.x + img.width || 
-                                   bounds.x + bounds.width < img.x || 
-                                   bounds.y > img.y + img.height || 
-                                   bounds.y + bounds.height < img.y);
-              
+              const intersects = !(bounds.x > img.x + img.width ||
+                bounds.x + bounds.width < img.x ||
+                bounds.y > img.y + img.height ||
+                bounds.y + bounds.height < img.y);
               if (intersects) {
                 drawElement(ctx, anno, img.x, img.y);
               }
             });
-
-            return {
-              href: canvas.toDataURL('image/png'),
-              mimeType: 'image/png'
-            };
+            return { href: canvas.toDataURL('image/png'), mimeType: 'image/png' };
           } catch (error) {
             console.warn('无法合并标注，使用原图:', error);
             return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
           }
         }
 
-        // 外部 URL 图片，直接使用原图（无法合并标注）
         console.warn('外部 URL 图片无法合并标注，将使用原图');
         return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
       }));
 
       const selectedModelInfo = models.find(model => model.id === selectedModel);
       const modelName = selectedModelInfo?.modelName;
+
+      patchElementById(placeholderId, {
+        generationProgress: { message: '模型编辑中，请稍候...' },
+      });
+
       const result = await editImage(imagesData, prompt, undefined, modelName, currentSessionId, selectedImageSize);
+      const imageSrc = resolveStableImageHref(result);
 
-      // 解析图片URL - 优先 base64 / 永久 OSS，避免缓存 volces 临时签名链接
-      let imageSrc = resolveStableImageHref(result);
+      if (!imageSrc) {
+        const errMsg = result.textResponse?.includes('余额不足')
+          ? result.textResponse
+          : (result.textResponse || '图片编辑失败');
+        patchElementById(placeholderId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: errMsg,
+        });
+        toast.error(errMsg);
+        return;
+      }
 
-      if (imageSrc) {
-        const appendImageElement = (href: string, img?: HTMLImageElement | null) => {
-          const w = img?.width || 512;
-          const h = img?.height || 512;
-          const { x, y } = getViewportCenterPlacement(w, h);
+      patchElementById(placeholderId, {
+        generationProgress: { message: '加载图片中...' },
+      });
 
-          const newElement: ImageElement = {
-            id: generateId(),
-            type: 'image',
-            x,
-            y,
-            width: w,
-            height: h,
-            href,
-            mimeType: 'image/png',
-            ...(img ? { image: img } : {}),
-            visible: true,
-            locked: false
-          };
-          setElements(prev => {
-            const newElements = [...prev, newElement];
-            setTimeout(() => saveToHistory(newElements), 0);
-            return newElements;
-          });
-          setSelectedElementIds([newElement.id]);
-          toast.success('图片编辑成功');
-        };
-
-        const img = await loadMediaImage(imageSrc);
-        if (img) {
-          appendImageElement(imageSrc, img);
-        } else if (isPermanentMediaUrl(imageSrc)) {
-          appendImageElement(imageSrc);
-        } else {
-          console.error('Image load failed');
-          toast.error(result.textResponse?.includes('余额不足') ? result.textResponse : '图片加载失败，请刷新后重试');
+      const img = await loadMediaImage(imageSrc);
+      if (img) {
+        const maxDisplaySize = 800;
+        let w = img.naturalWidth || img.width || phSize.width;
+        let h = img.naturalHeight || img.height || phSize.height;
+        if (w > maxDisplaySize || h > maxDisplaySize) {
+          const scale = Math.min(maxDisplaySize / w, maxDisplaySize / h);
+          w *= scale;
+          h *= scale;
         }
+        patchElementById(placeholderId, {
+          href: imageSrc,
+          image: img,
+          width: w,
+          height: h,
+          generationStatus: undefined,
+          generationProgress: undefined,
+          generationError: undefined,
+        });
+        toast.success('图片编辑成功');
+      } else if (isPermanentMediaUrl(imageSrc)) {
+        patchElementById(placeholderId, {
+          href: imageSrc,
+          generationStatus: undefined,
+          generationProgress: undefined,
+          generationError: undefined,
+        });
+        toast.success('图片编辑成功');
       } else {
-        // 检查是否是余额不足错误
-        if (result.textResponse && result.textResponse.includes('余额不足')) {
-          toast.error(result.textResponse);
-        } else {
-          toast.error(result.textResponse || '图片编辑失败');
-        }
+        const errMsg = result.textResponse?.includes('余额不足')
+          ? result.textResponse!
+          : '图片加载失败，请刷新后重试';
+        patchElementById(placeholderId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: errMsg,
+        });
+        toast.error(errMsg);
       }
     } catch (error: any) {
       console.error('Image editing failed:', error);
-      if (error.message === '用户未登录') {
-        toast.error('登录已过期，请重新登录');
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
+      const errMsg = error?.message === '用户未登录'
+        ? '登录已过期，请重新登录'
+        : (error?.message || '图片编辑失败');
+      patchElementById(placeholderId, {
+        generationStatus: 'failed',
+        generationProgress: undefined,
+        generationError: errMsg,
+      });
+      if (error?.message === '用户未登录') {
+        toast.error(errMsg);
+        setTimeout(() => { window.location.href = '/login'; }, 1500);
       } else {
-        toast.error(error.message || '图片编辑失败');
+        toast.error(errMsg);
       }
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -3976,7 +4197,7 @@ const ImageEditorPage: React.FC = () => {
       // 创建空白视频占位：始终当前视口中心（与是否选中图片无关）
       const placeholderSize = getVideoPlaceholderSize(videoRatio);
       videoElementId = generateId();
-      const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
+      const { x: videoX, y: videoY } = nextGenPlacement(placeholderSize.width, placeholderSize.height);
       const videoPlaceholder: VideoElement = {
         id: videoElementId,
         type: 'video',
@@ -3984,22 +4205,20 @@ const ImageEditorPage: React.FC = () => {
         y: videoY,
         width: placeholderSize.width,
         height: placeholderSize.height,
-        videoUrl: undefined, // 占位，还没有视频URL
+        videoUrl: undefined,
         href: undefined,
         visible: true,
-        locked: false
+        locked: false,
+        generationStatus: 'generating',
+        generationProgress: { message: '正在初始化视频生成...' },
       };
 
-      // 将视频占位元素添加到画布
       setElements(prev => {
         const newElements = [...prev, videoPlaceholder];
         setTimeout(() => saveToHistory(newElements), 0);
         return newElements;
       });
 
-      // 开始生成视频
-      setIsGeneratingVideo(true);
-      setVideoProgress({ message: '正在初始化视频生成...' });
       setGeneratedVideoUrl(null);
 
       const result = await generateVideo(
@@ -4012,13 +4231,19 @@ const ImageEditorPage: React.FC = () => {
         videoDuration,
         currentSessionId,
         (progress: any) => {
-          setVideoProgress(progress);
+          if (!videoElementId) return;
+          patchElementById(videoElementId, {
+            generationStatus: 'generating',
+            generationProgress: typeof progress === 'string'
+              ? { message: progress }
+              : { message: progress?.message || '视频生成中...', current: progress?.current, total: progress?.total },
+          });
         },
-        true, // audio
-        undefined, // audioData
-        undefined, // audioUrl
-        undefined, // seed
-        undefined, // referenceImages（不再使用，统一走 referenceMaterials）
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         referenceMaterials.length > 0 ? referenceMaterials : undefined
       );
 
@@ -4073,7 +4298,10 @@ const ImageEditorPage: React.FC = () => {
                   videoUrl: actualVideoUrl,
                   href: actualVideoUrl,
                   video: video,
-                  isPlaying: false
+                  isPlaying: false,
+                  generationStatus: undefined,
+                  generationProgress: undefined,
+                  generationError: undefined,
                 } as VideoElement;
               }
               return el;
@@ -4102,12 +4330,11 @@ const ImageEditorPage: React.FC = () => {
       setVideoProgress({ message: '视频生成失败' });
       toast.error(error.message || '视频生成失败，请重试');
       
-      // 删除空白的视频占位元素（如果已创建）
       if (videoElementId) {
-        setElements(prev => {
-          const newElements = prev.filter(el => el.id !== videoElementId);
-          setTimeout(() => saveToHistory(newElements), 0);
-          return newElements;
+        patchElementById(videoElementId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: (error && error.message) || '视频生成失败',
         });
       }
     } finally {
@@ -4136,7 +4363,7 @@ const ImageEditorPage: React.FC = () => {
     // 立即在画布上创建视频占位：始终当前视口中心（不放在起始图右侧）
     let videoElementId: string | null = generateId();
     const placeholderSize = getVideoPlaceholderSize(videoRatio);
-    const { x: videoX, y: videoY } = getViewportCenterPlacement(placeholderSize.width, placeholderSize.height);
+    const { x: videoX, y: videoY } = nextGenPlacement(placeholderSize.width, placeholderSize.height);
     const videoElement: VideoElement = {
       id: videoElementId,
       type: 'video',
@@ -4144,10 +4371,12 @@ const ImageEditorPage: React.FC = () => {
       y: videoY,
       width: placeholderSize.width,
       height: placeholderSize.height,
-      videoUrl: undefined, // 先不设置URL，显示占位符
+      videoUrl: undefined,
       href: undefined,
       visible: true,
-      locked: false
+      locked: false,
+      generationStatus: 'generating',
+      generationProgress: { message: '正在初始化视频生成...' },
     };
     
     setElements(prev => {
@@ -4156,8 +4385,6 @@ const ImageEditorPage: React.FC = () => {
       return newElements;
     });
 
-    setIsGeneratingVideo(true);
-    setVideoProgress({ message: '正在初始化视频生成...' });
     setGeneratedVideoUrl(null);
 
     try {
@@ -4188,7 +4415,11 @@ const ImageEditorPage: React.FC = () => {
         videoDuration,
         currentSessionId,
         (message: string, current?: number, total?: number) => {
-          setVideoProgress({ message, current, total });
+          if (!videoElementId) return;
+          patchElementById(videoElementId, {
+            generationStatus: 'generating',
+            generationProgress: { message, current, total },
+          });
         },
         true, // audio: 默认生成同步音频
         undefined, // audioData
@@ -4256,7 +4487,10 @@ const ImageEditorPage: React.FC = () => {
                     videoUrl: actualVideoUrl || result.videoUrl, 
                     href: actualVideoUrl || result.videoUrl,
                     video: video,
-                    isPlaying: false
+                    isPlaying: false,
+                    generationStatus: undefined,
+                    generationProgress: undefined,
+                    generationError: undefined,
                   } as VideoElement
                 : el
             );
@@ -4310,12 +4544,11 @@ const ImageEditorPage: React.FC = () => {
         toast.error(error.message || '视频生成失败');
       }
       
-      // 删除空白的视频占位元素（如果已创建）
       if (videoElementId) {
-        setElements(prev => {
-          const newElements = prev.filter(el => el.id !== videoElementId);
-          setTimeout(() => saveToHistory(newElements), 0);
-          return newElements;
+        patchElementById(videoElementId, {
+          generationStatus: 'failed',
+          generationProgress: undefined,
+          generationError: (error && error.message) || '视频生成失败',
         });
       }
     } finally {
@@ -4523,15 +4756,35 @@ const ImageEditorPage: React.FC = () => {
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
+    // 视口裁剪：只绘制可见区域附近的元素，多图时平移更流畅
+    const invZoom = zoom > 0 ? 1 / zoom : 1;
+    const margin = 200;
+    const viewLeft = -pan.x * invZoom - margin;
+    const viewTop = -pan.y * invZoom - margin;
+    const viewRight = viewLeft + canvas.width * invZoom + margin * 2;
+    const viewBottom = viewTop + canvas.height * invZoom + margin * 2;
+    const isInView = (el: { x: number; y: number; width: number; height: number }) =>
+      !(el.x + el.width < viewLeft || el.x > viewRight || el.y + el.height < viewTop || el.y > viewBottom);
+
     // Draw elements
     currentElements.forEach(element => {
       if (!element.visible) return;
+      if (!isInView(element)) return;
 
       ctx.save();
 
       switch (element.type) {
         case 'image': {
-          if (element.image) {
+          const imgEl = element as ImageElement;
+          if (imgEl.generationStatus === 'generating' || imgEl.generationStatus === 'failed') {
+            drawGenerationPlaceholder(ctx, imgEl, {
+              title: '图片生成中',
+              status: imgEl.generationStatus,
+              progress: imgEl.generationProgress,
+              error: imgEl.generationError,
+              accent: '#3b82f6',
+            });
+          } else if (element.image) {
             const borderRadius = (element as any).borderRadius || 0;
             if (borderRadius > 0) {
               ctx.beginPath();
@@ -4539,7 +4792,7 @@ const ImageEditorPage: React.FC = () => {
               ctx.clip();
             }
             ctx.drawImage(element.image, element.x, element.y, element.width, element.height);
-          } else if ((element as ImageElement).href) {
+          } else if (imgEl.href) {
             ctx.fillStyle = '#1f2937';
             ctx.fillRect(element.x, element.y, element.width, element.height);
             ctx.fillStyle = '#9ca3af';
@@ -4725,37 +4978,14 @@ const ImageEditorPage: React.FC = () => {
             ctx.lineWidth = 2;
             ctx.strokeRect(element.x, element.y, element.width, element.height);
           } else {
-            // 没有URL，显示加载中状态（视频正在生成）
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(element.x, element.y, element.width, element.height);
-            
-            // 绘制加载动画（旋转圆圈）
-            const radius = Math.min(element.width, element.height) * 0.1;
-            const time = Date.now() / 1000;
-            const startAngle = time * 2;
-            
-            ctx.strokeStyle = '#6366f1';
-            ctx.lineWidth = 4;
-            ctx.lineCap = 'round';
-            ctx.globalAlpha = 0.8;
-            
-            // 绘制旋转的圆弧
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, startAngle, startAngle + Math.PI * 1.5);
-            ctx.stroke();
-            
-            // 绘制边框（蓝色表示生成中）
-            ctx.globalAlpha = 1;
-            ctx.strokeStyle = '#6366f1';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(element.x, element.y, element.width, element.height);
-            
-            // 绘制"生成中..."标签
-            ctx.fillStyle = '#6366f1';
-            ctx.font = '14px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('视频生成中...', centerX, centerY + radius + 25);
-            ctx.textAlign = 'left';
+            // 没有URL：生成中 / 失败占位
+            drawGenerationPlaceholder(ctx, element, {
+              title: '视频生成中',
+              status: element.generationStatus === 'failed' ? 'failed' : 'generating',
+              progress: element.generationProgress,
+              error: element.generationError,
+              accent: '#8b5cf6',
+            });
           }
           break;
         }
@@ -4920,16 +5150,24 @@ const ImageEditorPage: React.FC = () => {
     // 恢复画布偏移
     ctx.restore();
     
-    // 如果有视频正在生成（没有videoUrl的video元素）或正在播放，持续重绘
-    const hasGeneratingVideo = currentElements.some(el => el.type === 'video' && !el.videoUrl);
+    // 有生成中占位或视频播放时持续重绘（平移中跳过，避免与 CSS 跟手叠加双倍开销）
+    const hasGeneratingMedia = currentElements.some(el =>
+      (el.type === 'video' && ((el as VideoElement).generationStatus === 'generating' || !el.videoUrl)) ||
+      (el.type === 'image' && (el as ImageElement).generationStatus === 'generating')
+    );
     const hasPlayingVideo = currentElements.some(el => el.type === 'video' && (el as VideoElement).isPlaying);
     
-    if (hasGeneratingVideo || hasPlayingVideo) {
+    if ((hasGeneratingMedia || hasPlayingVideo) && !isPanningRef.current) {
       let animationId: number;
       let isAnimating = true;
       
       const animate = () => {
         if (!isAnimating) return;
+        // 平移跟手期间跳过重绘，松手后由 useEffect 重启
+        if (isPanningRef.current) {
+          animationId = requestAnimationFrame(animate);
+          return;
+        }
         
         // 直接重绘画布
         const canvas = canvasRef.current;
@@ -4943,10 +5181,20 @@ const ImageEditorPage: React.FC = () => {
         ctx.save();
         ctx.translate(pan.x, pan.y);
         ctx.scale(zoom, zoom);
+
+        const invZoom = zoom > 0 ? 1 / zoom : 1;
+        const margin = 200;
+        const viewLeft = -pan.x * invZoom - margin;
+        const viewTop = -pan.y * invZoom - margin;
+        const viewRight = viewLeft + canvas.width * invZoom + margin * 2;
+        const viewBottom = viewTop + canvas.height * invZoom + margin * 2;
+        const isInView = (el: { x: number; y: number; width: number; height: number }) =>
+          !(el.x + el.width < viewLeft || el.x > viewRight || el.y + el.height < viewTop || el.y > viewBottom);
         
         // 重绘所有元素 - 使用 currentElements（来自 useEffect 依赖）
         currentElements.forEach(element => {
           if (!element.visible) return;
+          if (!isInView(element)) return;
           
           // 对于视频元素，特殊处理绘制
           if (element.type === 'video') {
@@ -4996,88 +5244,13 @@ const ImageEditorPage: React.FC = () => {
               ctx.lineWidth = 2;
               ctx.strokeRect(videoEl.x, videoEl.y, videoEl.width, videoEl.height);
             } else {
-              // 视频生成中的loading效果 - 占满整个视频控件
-              // 深色背景
-              ctx.fillStyle = '#0f0f1e';
-              ctx.fillRect(videoEl.x, videoEl.y, videoEl.width, videoEl.height);
-              
-              // 绘制动态渐变背景 - 占满整个控件
-              const time = Date.now() / 1000;
-              const gradient = ctx.createRadialGradient(
-                centerX + Math.cos(time) * videoEl.width * 0.1,
-                centerY + Math.sin(time) * videoEl.height * 0.1,
-                0,
-                centerX,
-                centerY,
-                Math.max(videoEl.width, videoEl.height) * 0.6
-              );
-              gradient.addColorStop(0, 'rgba(99, 102, 241, 0.3)');
-              gradient.addColorStop(0.5, 'rgba(139, 92, 246, 0.15)');
-              gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
-              ctx.fillStyle = gradient;
-              ctx.fillRect(videoEl.x, videoEl.y, videoEl.width, videoEl.height);
-              
-              // 绘制大型旋转loading圆环
-              const radius = Math.min(videoEl.width, videoEl.height) * 0.2;
-              const startAngle = time * 2;
-              
-              // 外圈 - 主loading圆环（更粗更明显）
-              ctx.strokeStyle = '#6366f1';
-              ctx.lineWidth = Math.max(8, videoEl.width * 0.02);
-              ctx.lineCap = 'round';
-              ctx.globalAlpha = 0.9;
-              ctx.beginPath();
-              ctx.arc(centerX, centerY, radius, startAngle, startAngle + Math.PI * 1.5);
-              ctx.stroke();
-              
-              // 中圈 - 辅助loading圆环（反向旋转）
-              ctx.strokeStyle = '#8b5cf6';
-              ctx.lineWidth = Math.max(6, videoEl.width * 0.015);
-              ctx.globalAlpha = 0.6;
-              ctx.beginPath();
-              ctx.arc(centerX, centerY, radius * 0.7, -startAngle * 1.5, -startAngle * 1.5 + Math.PI);
-              ctx.stroke();
-              
-              // 内圈 - 最小的圆环
-              ctx.strokeStyle = '#a78bfa';
-              ctx.lineWidth = Math.max(4, videoEl.width * 0.01);
-              ctx.globalAlpha = 0.4;
-              ctx.beginPath();
-              ctx.arc(centerX, centerY, radius * 0.4, startAngle * 2, startAngle * 2 + Math.PI * 0.8);
-              ctx.stroke();
-              
-              ctx.globalAlpha = 1;
-              
-              // 绘制粗边框
-              ctx.strokeStyle = '#6366f1';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(videoEl.x, videoEl.y, videoEl.width, videoEl.height);
-              
-              // 绘制大号标题文字
-              const titleFontSize = Math.max(24, videoEl.width * 0.06);
-              ctx.fillStyle = '#ffffff';
-              ctx.font = `bold ${titleFontSize}px Arial`;
-              ctx.textAlign = 'center';
-              ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-              ctx.shadowBlur = 10;
-              ctx.fillText('视频生成中', centerX, centerY - radius - 30);
-              ctx.shadowBlur = 0;
-              
-              // 绘制进度提示文字（更大更明显）
-              if (videoProgress && videoProgress.message) {
-                const progressFontSize = Math.max(16, videoEl.width * 0.04);
-                ctx.fillStyle = '#a5b4fc';
-                ctx.font = `${progressFontSize}px Arial`;
-                ctx.fillText(videoProgress.message, centerX, centerY + radius + 50);
-              }
-              
-              // 绘制底部提示文字
-              const hintFontSize = Math.max(14, videoEl.width * 0.035);
-              ctx.fillStyle = '#6b7280';
-              ctx.font = `${hintFontSize}px Arial`;
-              ctx.fillText('请稍候，正在为您生成视频...', centerX, videoEl.y + videoEl.height - 30);
-              
-              ctx.textAlign = 'left';
+              drawGenerationPlaceholder(ctx, videoEl, {
+                title: '视频生成中',
+                status: videoEl.generationStatus === 'failed' ? 'failed' : 'generating',
+                progress: videoEl.generationProgress,
+                error: videoEl.generationError,
+                accent: '#8b5cf6',
+              });
             }
           } else {
             drawElement(ctx, element);
@@ -5119,7 +5292,7 @@ const ImageEditorPage: React.FC = () => {
         cancelAnimationFrame(animationId);
       };
     }
-  }, [currentElements, canvasSize, pan, zoom, croppingState, editingTextId, hoveredElementId, atMentionedElements]);
+  }, [currentElements, canvasSize, pan, zoom, croppingState, editingTextId, hoveredElementId, atMentionedElements, isPanning]);
 
   return (
     <div className="h-screen bg-gray-900 text-white relative overflow-hidden" style={{ backgroundColor: 'var(--ui-bg-color)' }}>
@@ -5212,8 +5385,16 @@ const ImageEditorPage: React.FC = () => {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={() => {
-            // mouseLeave 时只清理拖动状态，不触发视频播放
-            if (isPanning) setIsPanning(false);
+            // mouseLeave 时结束平移并提交位置，避免 CSS 位移残留
+            if (isPanningRef.current) {
+              isPanningRef.current = false;
+              panDragOriginRef.current = null;
+              if (panSurfaceRef.current) {
+                panSurfaceRef.current.style.transform = '';
+              }
+              setPan({ ...panRef.current });
+              setIsPanning(false);
+            }
             if (isDragging) {
               setIsDragging(false);
               setDragElement(null);
@@ -5237,6 +5418,8 @@ const ImageEditorPage: React.FC = () => {
                       'crosshair'
           }}
         >
+          {/* 平移跟手层：拖拽时只改 CSS transform，避免每帧重绘多图 */}
+          <div ref={panSurfaceRef} className="absolute inset-0" style={{ willChange: 'transform' }}>
           <canvas
             ref={canvasRef}
             className="absolute inset-0"
@@ -6050,7 +6233,7 @@ const ImageEditorPage: React.FC = () => {
                 <QuickPrompts
                   t={t}
                   setPrompt={setPrompt}
-                  disabled={isGenerating}
+                  disabled={false}
                   userEffects={userEffects}
                   onDeleteUserEffect={handleDeleteUserEffect}
                 />
@@ -6301,7 +6484,7 @@ const ImageEditorPage: React.FC = () => {
                 </div>
 
                 {/* 保存我的prompt按钮 - 仅当有输入内容时显示 */}
-                {prompt.trim() && !isGenerating && (
+                {prompt.trim() && (
                   <button
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
@@ -6336,22 +6519,14 @@ const ImageEditorPage: React.FC = () => {
                       }
                     }
                   }}
-                  disabled={(generateMode === 'image' && isGenerating) || (generateMode === 'video' && isGeneratingVideo) || !prompt.trim()}
+                  disabled={!prompt.trim()}
                   className={`flex-shrink-0 px-5 py-2.5 ${
                     generateMode === 'video'
                       ? 'bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40'
                       : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40'
                   } disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-all duration-200 flex items-center gap-2`}
                 >
-                  {((generateMode === 'image' && isGenerating) || (generateMode === 'video' && isGeneratingVideo)) ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      <span>生成中</span>
-                    </>
-                  ) : (
+                  {(
                     <>
                       {generateMode === 'video' ? (
                         <>
@@ -6576,6 +6751,7 @@ const ImageEditorPage: React.FC = () => {
           </svg>
         )}
       </div>
+      </div>
 
       {/* Prompt Bar */}
       {showPromptBar && (
@@ -6587,7 +6763,7 @@ const ImageEditorPage: React.FC = () => {
           selectedImagesCount={currentElements.filter(el =>
             selectedElementIds.includes(el.id) && el.type === 'image'
           ).length}
-          isGenerating={isGenerating}
+          isGenerating={false}
         />
       )}
 
@@ -6743,7 +6919,22 @@ const ImageEditorPage: React.FC = () => {
             }
           }}
           onRenameBoard={(id, name) => {
-            setBoards(prev => prev.map(b => b.id === id ? { ...b, name } : b));
+            let sessionId: string | undefined;
+            setBoards(prev => {
+              const updated = prev.map(b => {
+                if (b.id !== id && b.sessionId !== id) return b;
+                sessionId = b.sessionId || b.id;
+                return { ...b, name };
+              });
+              saveBoardsToCache(updated);
+              return updated;
+            });
+            if (sessionId) {
+              chatApi.updateSession({ sessionId, sessionTitle: name }).catch((err) => {
+                console.error('更新画板标题失败:', err);
+                toast.error('画板重命名同步失败，刷新后可能恢复旧名称');
+              });
+            }
           }}
           generateBoardThumbnail={generateBoardThumbnail}
         />
@@ -6806,7 +6997,7 @@ const ImageEditorPage: React.FC = () => {
                 placeholder="描述视频效果（可选）..."
                 className="w-full bg-black/50 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !isGeneratingVideo) {
+                  if (e.key === 'Enter') {
                     handleGenerateVideo();
                   }
                 }}
@@ -6871,21 +7062,14 @@ const ImageEditorPage: React.FC = () => {
                 {/* 生成按钮 */}
                 <button
                   onClick={handleGenerateVideo}
-                  disabled={!selectedStartImage || isGeneratingVideo}
+                  disabled={!selectedStartImage}
                   className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-md text-xs font-medium transition-colors flex items-center gap-1.5"
                   title="生成视频"
                 >
-                  {isGeneratingVideo ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      生成中
-                    </>
-                  ) : (
-                    <>
-                      <Video className="w-3.5 h-3.5" />
-                      生成
-                    </>
-                  )}
+                  <>
+                    <Video className="w-3.5 h-3.5" />
+                    生成
+                  </>
                 </button>
 
                 {/* 关闭按钮 */}
