@@ -1,6 +1,6 @@
 import axios from 'axios';
 import config from '../config';
-import { isPermanentMediaUrl } from '../utils/mediaCache';
+import { cacheMediaUrl, isPermanentMediaUrl } from '../utils/mediaCache';
 
 // 图片生成/编辑可能耗时较长，与视频生成对齐放宽超时
 const IMAGE_API_TIMEOUT_MS = 30 * 60 * 1000;
@@ -294,15 +294,42 @@ export async function editImage(
       throw new Error('用户未登录');
     }
 
-    // 准备图片数据
-    const imageDataList = images.map(image => {
-      const dataUrlParts = image.href.split(',');
-      const base64Data = dataUrlParts.length > 1 ? dataUrlParts[1] : dataUrlParts[0];
-      return {
-        data: base64Data,
-        mimeType: image.mimeType
-      };
-    });
+    // 将 data: / http(s) / blob 统一转成后端需要的 base64（此前 http URL 会被整段当 base64 传上去）
+    const toBase64Payload = async (image: ImageInput): Promise<{ data: string; mimeType: string }> => {
+      const href = (image.href || '').trim();
+      if (!href) {
+        throw new Error('图片地址为空，请重新上传后再编辑');
+      }
+
+      if (href.startsWith('data:')) {
+        const dataUrlParts = href.split(',');
+        const base64Data = dataUrlParts.length > 1 ? dataUrlParts[1] : dataUrlParts[0];
+        if (!base64Data) {
+          throw new Error('图片数据无效，请重新上传后再编辑');
+        }
+        return { data: base64Data, mimeType: image.mimeType || 'image/png' };
+      }
+
+      // 优先走 IndexedDB / 网络缓存拿到 data URL，失败再尝试 canvas CORS 导出
+      const cachedOrUrl = await cacheMediaUrl(href);
+      if (cachedOrUrl.startsWith('data:')) {
+        const parts = cachedOrUrl.split(',');
+        const base64Data = parts.length > 1 ? parts[1] : parts[0];
+        if (base64Data) {
+          return { data: base64Data, mimeType: image.mimeType || 'image/png' };
+        }
+      }
+
+      try {
+        const base64Data = await fetchImageAsBase64(href);
+        return { data: base64Data, mimeType: image.mimeType || 'image/png' };
+      } catch (error) {
+        console.warn('编辑接口转换图片为 base64 失败:', href, error);
+        throw new Error('无法读取选中图片，请重新上传后再编辑');
+      }
+    };
+
+    const imageDataList = await Promise.all(images.map(toBase64Payload));
 
     const requestData: any = {
       userId: userId, // 保持字符串格式，避免大数精度丢失
@@ -322,12 +349,8 @@ export async function editImage(
 
     // 如果有蒙版，添加蒙版数据
     if (mask) {
-      const maskDataUrlParts = mask.href.split(',');
-      const maskBase64Data = maskDataUrlParts.length > 1 ? maskDataUrlParts[1] : maskDataUrlParts[0];
-      requestData.mask = {
-        data: maskBase64Data,
-        mimeType: mask.mimeType
-      };
+      const maskPayload = await toBase64Payload(mask);
+      requestData.mask = maskPayload;
     }
 
     const response = await apiClient.post('/ai/image/edit', requestData);

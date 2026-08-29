@@ -264,16 +264,17 @@ export const loadMediaImage = async (url: string): Promise<HTMLImageElement | nu
 
 /**
  * 批量预缓存 URL 列表（后台静默执行，不阻塞主流程）
- * 复用 loadMediaImage 的并发控制与去重，避免与画布加载争抢连接
+ * 成功过的 URL 永久标记，避免反复 save/打开时重复解码
  */
 export const prefetchMediaUrls = (urls: string[]): void => {
   const unique = [...new Set(urls.filter(u => u && u.startsWith('http') && !isTemporaryMediaUrl(u)))];
   for (const url of unique) {
     if (scheduledPrefetch.has(url)) continue;
     scheduledPrefetch.add(url);
-    loadMediaImage(url)
-      .catch(() => {})
-      .finally(() => { scheduledPrefetch.delete(url); });
+    loadMediaImage(url).catch(() => {
+      // 失败才允许下次重试
+      scheduledPrefetch.delete(url);
+    });
   }
 };
 

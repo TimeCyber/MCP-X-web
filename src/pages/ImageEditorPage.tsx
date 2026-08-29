@@ -15,7 +15,7 @@ import { modelApi, ModelInfo, sortModelsByOrderBy } from '../services/modelApi';
 import { chatApi } from '../services/chatApi';
 import { generateVideo, uploadFileToOss } from '../services/videogenService';
 import { fileToDataUrl } from '../utils/fileUtils';
-import { loadMediaImage, prefetchMediaUrls, cleanExpiredCache, isTemporaryMediaUrl, isPermanentMediaUrl } from '../utils/mediaCache';
+import { loadMediaImage, cleanExpiredCache, isTemporaryMediaUrl, isPermanentMediaUrl } from '../utils/mediaCache';
 import { translations } from '../i18n/translations';
 import { toast } from '../utils/toast';
 
@@ -923,17 +923,9 @@ const ImageEditorPage: React.FC = () => {
         console.warn('boards 缓存超出配额，剥离 base64 后重试:', quotaError);
         localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(serialize(true)));
       }
-
-      // 后台静默缓存所有 http 图片 URL 到 IndexedDB
-      const httpImageUrls: string[] = [];
-      for (const board of boardsToSave) {
-        for (const el of board.elements) {
-          if (el.type === 'image' && el.href && el.href.startsWith('http') && !isTemporaryMediaUrl(el.href)) {
-            httpImageUrls.push(el.href);
-          }
-        }
-      }
-      if (httpImageUrls.length > 0) prefetchMediaUrls(httpImageUrls);
+      // 不再在每次写缓存时 prefetch 全量图片：
+      // 此前每次 elements 防抖保存都会对所有画板 http 图重新走 loadMediaImage，
+      // 打开界面会表现为“一直在加载本地/缓存图片”。画布展示由 hydrate 按需加载即可。
     } catch (error) {
       console.error('保存 boards 缓存失败:', error);
     }
@@ -2590,27 +2582,9 @@ const ImageEditorPage: React.FC = () => {
       });
 
     const restoreBoardElements = async (board: Board): Promise<Board> => {
-      // 先恢复图片（走统一并发控制），避免与视频大文件下载争抢连接
-      const imageRestored = await Promise.all(board.elements.map(async (el) => {
-        if (el.type === 'image' && el.href && !el.image) {
-          const img = await loadMediaImage(el.href);
-          if (!img) return el;
-          const maxDisplaySize = 800;
-          let displayWidth = img.naturalWidth || img.width || el.width || 512;
-          let displayHeight = img.naturalHeight || img.height || el.height || 512;
-          if (displayWidth > maxDisplaySize || displayHeight > maxDisplaySize) {
-            const scale = Math.min(maxDisplaySize / displayWidth, maxDisplaySize / displayHeight);
-            displayWidth *= scale;
-            displayHeight *= scale;
-          }
-          return { ...el, image: img, width: displayWidth, height: displayHeight };
-        }
-        return el;
-      }));
-
-      // 视频串行加载封面，避免多个 mp4 同时下载占满浏览器连接池
+      // 图片交给 hydrate effect 按需加载，避免打开时与 hydrate/prefetch 重复解码同一批本地/缓存图
       const restoredElements: Element[] = [];
-      for (const el of imageRestored) {
+      for (const el of board.elements) {
         if (el.type === 'video' && (el as VideoElement).videoUrl && !(el as VideoElement).video) {
           restoredElements.push(await loadVideoPoster(el as VideoElement));
         } else {
@@ -3075,6 +3049,7 @@ const ImageEditorPage: React.FC = () => {
 
         // 支持多选：按住Ctrl键时添加/移除选择，否则替换选择
         const isCtrlPressed = e.ctrlKey || e.metaKey; // 支持Mac的Cmd键
+        let willDeselect = false;
         if (isCtrlPressed) {
           // 多选模式
           setSelectedElementIds(prev => {
@@ -3087,13 +3062,20 @@ const ImageEditorPage: React.FC = () => {
             }
           });
         } else {
-          // 单选模式
-          setSelectedElementIds([clickedElement.id]);
+          // 单选：再次点击当前已选中的同一元素则取消选中
+          willDeselect =
+            selectedElementIds.length === 1 && selectedElementIds[0] === clickedElement.id;
+          setSelectedElementIds(willDeselect ? [] : [clickedElement.id]);
         }
 
-        setIsDragging(true);
-        setDragStartPos(mousePos);
-        setDragElement(clickedElement);
+        if (!willDeselect) {
+          setIsDragging(true);
+          setDragStartPos(mousePos);
+          setDragElement(clickedElement);
+        } else {
+          setIsDragging(false);
+          setDragElement(null);
+        }
         setLastClickElementId(clickedElement.id);
         setLastClickTime(currentTime);
       } else {
@@ -3700,29 +3682,28 @@ const ImageEditorPage: React.FC = () => {
       }
     } else {
       try {
-        const { dataUrl, mimeType } = await fileToDataUrl(file);
+        // 与视频一致：先上传 OSS，避免 data URL 刷新/配额溢出后 href 丢失导致编辑传空图
+        const ossUrl = await uploadFileToOss(file);
+        const mimeType = file.type || 'image/png';
         const img = new Image();
+        img.crossOrigin = 'anonymous';
 
-        // 创建Promise来等待图片加载完成
         await new Promise((resolve, reject) => {
           img.onload = () => resolve(undefined);
           img.onerror = () => reject(new Error('Failed to load image'));
-          img.src = dataUrl;
+          img.src = ossUrl;
         });
 
-        // 计算图片在canvas中的合适大小和位置
-        const maxWidth = canvasSize.width - 200; // 留出边距
-        const maxHeight = canvasSize.height - 200; // 留出边距
+        const maxWidth = canvasSize.width - 200;
+        const maxHeight = canvasSize.height - 200;
 
         let displayWidth = img.width;
         let displayHeight = img.height;
 
-        // 如果图片太大，缩放以适应canvas
         if (img.width > maxWidth || img.height > maxHeight) {
           const scaleX = maxWidth / img.width;
           const scaleY = maxHeight / img.height;
           const scale = Math.min(scaleX, scaleY);
-
           displayWidth = img.width * scale;
           displayHeight = img.height * scale;
         }
@@ -3736,22 +3717,21 @@ const ImageEditorPage: React.FC = () => {
           y: displayY,
           width: displayWidth,
           height: displayHeight,
-          href: dataUrl,
-          mimeType: mimeType,
-          image: img, // 保存加载完成的图片对象
+          href: ossUrl,
+          mimeType,
+          image: img,
           visible: true,
           locked: false
         };
         setElements(prev => {
           const newElements = [...prev, newElement];
-          // 保存历史记录
           setTimeout(() => saveToHistory(newElements), 0);
           return newElements;
         });
         setSelectedElementIds([newElement.id]);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load image:', error);
-        toast.error('Failed to load image');
+        toast.error(error?.message || '图片上传失败');
       }
     }
   };
@@ -3944,7 +3924,34 @@ const ImageEditorPage: React.FC = () => {
     setSelectedElementIds([placeholderId]);
 
     try {
+      /** 恢复可用的图片地址：刷新后 data URL 可能被配额剥离，优先用内存中的 Image 导出 */
+      const resolveImageHrefForEdit = (img: ImageElement): string => {
+        if (img.href?.trim()) return img.href.trim();
+        if (img.image) {
+          try {
+            const canvas = document.createElement('canvas');
+            const w = img.image.naturalWidth || img.width || 1;
+            const h = img.image.naturalHeight || img.height || 1;
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img.image, 0, 0, w, h);
+              return canvas.toDataURL('image/png');
+            }
+          } catch (error) {
+            console.warn('从内存 Image 导出失败:', error);
+          }
+        }
+        return '';
+      };
+
       const imagesData = await Promise.all(selectedImages.map(async (img) => {
+        const resolvedHref = resolveImageHrefForEdit(img);
+        if (!resolvedHref) {
+          throw new Error('图片地址丢失，请重新上传后再编辑');
+        }
+
         const annotations = currentElements.filter(el =>
           el.id !== img.id &&
           (el.locked || el.name === 'annotation' || el.name === 'eraser_path')
@@ -3959,18 +3966,26 @@ const ImageEditorPage: React.FC = () => {
         });
 
         if (!hasAnnotations) {
-          return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
+          return { href: resolvedHref, mimeType: img.mimeType || 'image/png' };
         }
 
-        if (img.href && img.href.startsWith('data:')) {
+        if (resolvedHref.startsWith('data:') || img.image) {
           try {
             const canvas = document.createElement('canvas');
             canvas.width = img.width;
             canvas.height = img.height;
             const ctx = canvas.getContext('2d');
-            if (!ctx) return { href: img.href || '', mimeType: 'image/png' };
+            if (!ctx) return { href: resolvedHref, mimeType: img.mimeType || 'image/png' };
             if (img.image) {
               ctx.drawImage(img.image, 0, 0, img.width, img.height);
+            } else {
+              const tmp = new Image();
+              tmp.src = resolvedHref;
+              await new Promise<void>((resolve, reject) => {
+                tmp.onload = () => resolve();
+                tmp.onerror = () => reject(new Error('load failed'));
+              });
+              ctx.drawImage(tmp, 0, 0, img.width, img.height);
             }
             annotations.forEach(anno => {
               const bounds = getElementBounds(anno, currentElements);
@@ -3985,12 +4000,12 @@ const ImageEditorPage: React.FC = () => {
             return { href: canvas.toDataURL('image/png'), mimeType: 'image/png' };
           } catch (error) {
             console.warn('无法合并标注，使用原图:', error);
-            return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
+            return { href: resolvedHref, mimeType: img.mimeType || 'image/png' };
           }
         }
 
         console.warn('外部 URL 图片无法合并标注，将使用原图');
-        return { href: img.href || '', mimeType: img.mimeType || 'image/png' };
+        return { href: resolvedHref, mimeType: img.mimeType || 'image/png' };
       }));
 
       const selectedModelInfo = models.find(model => model.id === selectedModel);
@@ -6086,8 +6101,11 @@ const ImageEditorPage: React.FC = () => {
           );
         })()}
 
-        {/* Floating AI Input Bar */}
-        <div className="absolute bottom-6 left-6 right-6 z-30 pointer-events-none">
+        {/* Floating AI Input Bar：阻止冒泡到画布，避免点击输入框清空选中 */}
+        <div
+          className="absolute bottom-6 left-6 right-6 z-30 pointer-events-none"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           <div className="max-w-4xl mx-auto pointer-events-auto">
             {/* 模型选择器和生成模式选择 */}
             <div className="flex justify-between items-center mb-3">
@@ -6220,14 +6238,62 @@ const ImageEditorPage: React.FC = () => {
               ref={floatingPromptInputCardRef}
               className="bg-gray-800/60 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.3)]"
             >
-              {/* 显示选中的图片数量提示 */}
-              {selectedElementIds.length > 0 && currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length > 0 && (
-                <div className="px-4 pt-3 pb-1">
-                  <span className="text-xs text-blue-400 bg-blue-500/20 px-2 py-1 rounded-full">
-                    已选中 {currentElements.filter(el => selectedElementIds.includes(el.id) && el.type === 'image').length} 张图片 - 将进行图片编辑
-                  </span>
-                </div>
-              )}
+              {/* 选中图片预览：取消预览时同步取消画布选中 */}
+              {(() => {
+                const selectedImages = currentElements.filter(
+                  (el): el is ImageElement =>
+                    selectedElementIds.includes(el.id) &&
+                    el.type === 'image' &&
+                    el.generationStatus !== 'generating'
+                );
+                if (selectedImages.length === 0) return null;
+                return (
+                  <div className="px-4 pt-3 pb-1 flex items-center gap-2 flex-wrap">
+                    {selectedImages.map((img) => {
+                      const thumbSrc = img.href || img.image?.src || '';
+                      return (
+                        <div
+                          key={img.id}
+                          className="relative w-12 h-12 flex-shrink-0"
+                        >
+                          <div className="w-full h-full rounded-lg overflow-hidden border border-white/20 bg-black/40">
+                            {thumbSrc ? (
+                              <img
+                                src={thumbSrc}
+                                alt=""
+                                className="w-full h-full object-cover"
+                                draggable={false}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] text-white/40">
+                                图
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            title="取消选中"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedElementIds((prev) => prev.filter((id) => id !== img.id));
+                            }}
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/85 border border-white/25 text-white flex items-center justify-center hover:bg-red-500 hover:border-red-400 transition-colors z-10"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <span className="text-xs text-blue-400 bg-blue-500/20 px-2 py-1 rounded-full">
+                      将进行图片编辑
+                    </span>
+                  </div>
+                );
+              })()}
               <div className="flex items-center gap-2 p-3">
                 {/* QuickPrompts 快捷效果选择器 */}
                 <QuickPrompts
