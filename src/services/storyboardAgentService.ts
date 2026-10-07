@@ -442,3 +442,73 @@ export const applyStoryboardAnalysisToShots = (
     };
   });
 };
+
+/** 根据用户修改意见，在现有镜头 prompt 基础上改写一版（直接返回完整新 prompt） */
+export const refineStoryboardShotPrompt = async (
+  currentPrompt: string,
+  revisionNotes: string,
+  textModel: string,
+  options?: {
+    userId?: string;
+    sessionId?: string;
+  }
+): Promise<string> => {
+  const userId = options?.userId || localStorage.getItem('userId');
+  if (!userId) throw new Error('用户未登录');
+
+  const prompt = (currentPrompt || '').trim();
+  const notes = (revisionNotes || '').trim();
+  if (!prompt) throw new Error('当前提示词为空');
+  if (!notes) throw new Error('请输入修改意见');
+
+  let fullText = '';
+
+  const sendData: SendDTO = {
+    messages: [
+      {
+        role: 'system',
+        content: `你是 Seedance 2.0 文戏导演助手。用户会给出「现有镜头提示词」和「修改意见」。
+你的任务：在保留原提示词核心剧情、角色、场景与时间戳结构的前提下，按修改意见改写并输出一版更优的完整提示词。
+
+硬性要求：
+1. 只输出改写后的完整提示词正文，不要解释、不要前言后语、不要 markdown 代码块；
+2. 尽量保持原有格式（如 [0.0s-x.0s]、对白/旁白行等）；
+3. 修改意见未提及的部分尽量保留，只增强或修正被要求改动的部分；
+4. 输出语言与原提示词一致。`,
+      },
+      {
+        role: 'user',
+        content: `【现有镜头提示词】
+${prompt.slice(0, 8000)}
+
+【修改意见】
+${notes.slice(0, 2000)}
+
+请直接输出改写后的完整提示词：`,
+      },
+    ],
+    model: textModel || 'deepseek-chat',
+    stream: true,
+    userId: String(userId),
+    sessionId: options?.sessionId,
+    appId: 'mcpx-video-studio',
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    streamChatSend(
+      sendData,
+      (chunk) => {
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) fullText += delta;
+      },
+      (err) => reject(err),
+      () => resolve()
+    );
+  });
+
+  let result = fullText.trim();
+  const fence = result.match(/^```(?:\w+)?\s*([\s\S]*?)```$/);
+  if (fence?.[1]) result = fence[1].trim();
+  if (!result) throw new Error('模型未返回有效提示词');
+  return result;
+};

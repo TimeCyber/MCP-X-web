@@ -3,7 +3,7 @@ import { Loader2, Video, Image as ImageIcon, LayoutGrid, Sparkles, AlertCircle, 
 import type { VideoGenProject, Shot, Keyframe } from '../../types/videogen';
 import { resolveVideoType } from '../../types/videogen';
 import { generateImage, generateVideo, addAssetToLibrary, getAssetsFromLibrary, deleteAssetFromLibrary, AssetLibraryItem, uploadFileToOss } from '../../services/videogenService';
-import { wrapStoryboardImagePrompt, buildStoryboardRefContextFromShot, buildStoryboardVideoReferenceMaterials } from '../../services/storyboardAgentService';
+import { wrapStoryboardImagePrompt, buildStoryboardRefContextFromShot, buildStoryboardVideoReferenceMaterials, refineStoryboardShotPrompt } from '../../services/storyboardAgentService';
 import { modelApi, ModelInfo, sortModelsByOrderBy } from '../../services/modelApi';
 import { chatApi } from '../../services/chatApi';
 import {
@@ -168,11 +168,18 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
   const [editingEndPrompt, setEditingEndPrompt] = useState(false);
   const [tempStartPrompt, setTempStartPrompt] = useState('');
   const [tempEndPrompt, setTempEndPrompt] = useState('');
+
+  // 故事板：按修改意见改进镜头提示词
+  const [refinePanelShotId, setRefinePanelShotId] = useState<string | null>(null);
+  const [refineFeedbackText, setRefineFeedbackText] = useState('');
+  const [refiningShotId, setRefiningShotId] = useState<string | null>(null);
   
   // 资源库状态
   const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [libraryType, setLibraryType] = useState<'start' | 'end' | 'video'>('start');
   const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
+  /** 资源库选择应用到的目标镜头（故事板列表不依赖详情面板选中态） */
+  const libraryTargetShotIdRef = useRef<string | null>(null);
   const [playingVideos, setPlayingVideos] = useState<Set<string>>(new Set()); // 跟踪正在播放的视频ID
   
   // 跨项目资源 Tab 状态
@@ -360,6 +367,54 @@ const StageDirector: React.FC<Props> = ({ project, updateProject, savingProject 
       dialogue,
       narration,
     }));
+  };
+
+  const handleRefineStoryboardPrompt = async (shot: Shot) => {
+    const currentPrompt = buildNarrativeFromShot(shot).trim();
+    const notes = refineFeedbackText.trim();
+    if (!currentPrompt) {
+      alert('当前分镜脚本为空，请先填写提示词');
+      return;
+    }
+    if (!notes) {
+      alert('请输入修改意见');
+      return;
+    }
+    if (refiningShotId) return;
+
+    setRefiningShotId(shot.id);
+    try {
+      const improved = await refineStoryboardShotPrompt(
+        currentPrompt,
+        notes,
+        project.textModel || 'deepseek-chat',
+        { sessionId: project.sessionId }
+      );
+      const { actionSummary, dialogue, narration } = parseNarrativeFromText(improved);
+      updateShot(shot.id, (s) => {
+        const keyframes = [...(s.keyframes || [])];
+        const startIdx = keyframes.findIndex((k) => k.type === 'start');
+        if (startIdx >= 0) {
+          keyframes[startIdx] = {
+            ...keyframes[startIdx],
+            visualPrompt: improved,
+          };
+        }
+        return {
+          ...s,
+          actionSummary,
+          dialogue,
+          narration,
+          keyframes,
+        };
+      });
+      setRefinePanelShotId(null);
+      setRefineFeedbackText('');
+    } catch (e: any) {
+      alert(`改进提示词失败: ${e?.message || '未知错误'}`);
+    } finally {
+      setRefiningShotId(null);
+    }
   };
 
   const resolveStoryboardImagePrompt = useCallback((shot: Shot, type: 'start' | 'end') => {
@@ -2466,7 +2521,15 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
   };
 
   // 打开资源库选择关键帧
-  const handleOpenLibraryForKeyframe = async (type: 'start' | 'end') => {
+  const handleOpenLibraryForKeyframe = async (type: 'start' | 'end', shotId?: string) => {
+    const targetShotId = shotId || activeShotId;
+    if (!targetShotId) {
+      alert('请先选择镜头');
+      return;
+    }
+    libraryTargetShotIdRef.current = targetShotId;
+    if (shotId) setActiveShotId(shotId);
+
     setLibraryType(type);
     setShowLibraryModal(true);
     setActiveLibraryTabId('local'); // 重置为本地资源库
@@ -2522,7 +2585,8 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
 
   // 从资源库选择关键帧
   const handleSelectKeyframeFromLibrary = (asset: AssetLibraryItem) => {
-    if (!activeShot) return;
+    const targetShotId = libraryTargetShotIdRef.current || activeShotId;
+    if (!targetShotId) return;
     if (libraryType === 'video') return; // Type guard: this function only handles keyframes
     
     // 确定要使用的图片URL
@@ -2539,8 +2603,13 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
       // 如果是普通图片资源，直接使用 imageUrl
       imageUrl = asset.imageUrl;
     }
+
+    if (!imageUrl) {
+      alert('该资源没有可用图片');
+      return;
+    }
     
-    updateShot(activeShot.id, (s) => {
+    updateShot(targetShotId, (s) => {
       const newKeyframes = [...(s.keyframes || [])];
       const idx = newKeyframes.findIndex(k => k.type === libraryType);
       const newKf: Keyframe = {
@@ -2629,7 +2698,15 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
   };
 
   // 打开视频资源库
-  const handleOpenVideoLibrary = async () => {
+  const handleOpenVideoLibrary = async (shotId?: string) => {
+    const targetShotId = shotId || activeShotId;
+    if (!targetShotId) {
+      alert('请先选择镜头');
+      return;
+    }
+    libraryTargetShotIdRef.current = targetShotId;
+    if (shotId) setActiveShotId(shotId);
+
     setLibraryType('video');
     setShowLibraryModal(true);
     setActiveLibraryTabId('local'); // 重置为本地资源库
@@ -2799,9 +2876,10 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
 
   // 从资源库选择视频
   const handleSelectVideoFromLibrary = (asset: AssetLibraryItem) => {
-    if (!activeShot || !asset.videoUrl) return;
+    const targetShotId = libraryTargetShotIdRef.current || activeShotId;
+    if (!targetShotId || !asset.videoUrl) return;
     
-    updateShot(activeShot.id, (s) => {
+    updateShot(targetShotId, (s) => {
       const sKf = s.keyframes?.find(k => k.type === 'start');
       const eKf = s.keyframes?.find(k => k.type === 'end');
 
@@ -2821,7 +2899,6 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
           videoUrl: asset.videoUrl,
           status: 'completed' as const,
           duration: asset.metadata?.duration || currentInterval.duration,
-          // 如果原来的 interval 没有 ID，确保这里有一个（虽然 currentInterval 已经处理了）
           startKeyframeId: sKf?.id || currentInterval.startKeyframeId,
           endKeyframeId: eKf?.id || currentInterval.endKeyframeId
         }
@@ -3274,17 +3351,73 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
 
                       {/* 分镜脚本（可编辑，宽度与故事板/视频三等分，高度随宽度 16:9） */}
                       <div className="flex flex-col gap-2 min-w-0 w-full">
-                        <div className="w-full aspect-video">
+                        <div className="w-full aspect-video relative">
                           <textarea
                             value={narrativeText}
                             onChange={(e) => handleStoryboardNarrativeChange(shot.id, e.target.value)}
-                            className="w-full h-full bg-[#0A0A0A] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 resize-none leading-relaxed"
+                            disabled={refiningShotId === shot.id}
+                            className="w-full h-full bg-[#0A0A0A] border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 resize-none leading-relaxed disabled:opacity-60"
                             placeholder="[0.0s-5.0s] 镜头描述...&#10;对白: &quot;...&quot;"
                           />
+                          {refiningShotId === shot.id && (
+                            <div className="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center gap-2">
+                              <Loader2 className="w-5 h-5 text-amber-400 animate-spin" />
+                              <span className="text-xs text-amber-300 font-medium">正在改进提示词...</span>
+                            </div>
+                          )}
                         </div>
-                        <div className="hidden md:block py-1.5 text-[10px] leading-none invisible shrink-0" aria-hidden="true">
-                          占位
-                        </div>
+                        {refinePanelShotId === shot.id ? (
+                          <div className="flex flex-col gap-1.5 p-2 bg-[#0A0A0A] border border-amber-500/30 rounded-md">
+                            <textarea
+                              value={refineFeedbackText}
+                              onChange={(e) => setRefineFeedbackText(e.target.value)}
+                              rows={2}
+                              autoFocus
+                              placeholder="输入修改意见，例如：运镜再推近一点、对白更口语、光影偏冷..."
+                              className="w-full bg-transparent border border-zinc-700 rounded px-2 py-1.5 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/60 resize-none"
+                              disabled={refiningShotId === shot.id}
+                            />
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleRefineStoryboardPrompt(shot)}
+                                disabled={refiningShotId === shot.id || !refineFeedbackText.trim() || !narrativeText.trim()}
+                                className="flex-1 py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-center gap-1 disabled:opacity-50 transition-colors"
+                              >
+                                {refiningShotId === shot.id ? (
+                                  <><Loader2 className="w-3 h-3 animate-spin" /> 改进中</>
+                                ) : (
+                                  <><Sparkles className="w-3 h-3" /> 生成改进并替换</>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRefinePanelShotId(null);
+                                  setRefineFeedbackText('');
+                                }}
+                                disabled={refiningShotId === shot.id}
+                                className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-bold rounded-md disabled:opacity-50"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRefinePanelShotId(shot.id);
+                              setRefineFeedbackText('');
+                            }}
+                            disabled={refiningShotId === shot.id || !narrativeText.trim()}
+                            className="w-full py-1.5 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 disabled:opacity-40 transition-colors border border-zinc-700/80"
+                            title="根据修改意见改写当前分镜脚本"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            修改意见改进
+                          </button>
+                        )}
                       </div>
 
                       {/* 故事板图片 */}
@@ -3309,17 +3442,28 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                             </div>
                           )}
                         </div>
-                        <button
-                          onClick={() => handleGenerateKeyframe(shot, 'start', narrativeText)}
-                          disabled={isImageGenerating || !narrativeText.trim()}
-                          className="w-full py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
-                        >
-                          {isImageGenerating ? (
-                            <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
-                          ) : (
-                            <><Sparkles className="w-3 h-3" /> {sbKf?.imageUrl ? '重新生成' : '生成故事板'}</>
-                          )}
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => handleGenerateKeyframe(shot, 'start', narrativeText)}
+                            disabled={isImageGenerating || !narrativeText.trim()}
+                            className="flex-1 py-1.5 bg-amber-600/90 hover:bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+                          >
+                            {isImageGenerating ? (
+                              <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
+                            ) : (
+                              <><Sparkles className="w-3 h-3" /> {sbKf?.imageUrl ? '重新生成' : '生成故事板'}</>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenLibraryForKeyframe('start', shot.id)}
+                            disabled={isImageGenerating}
+                            className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-bold rounded-md flex items-center justify-center disabled:opacity-50 transition-colors border border-zinc-700"
+                            title="从资源库选择图片"
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* 视频 */}
@@ -3348,21 +3492,32 @@ ${angleDescriptions[editorCameraAngle]}. ${editorPrompt}
                             </div>
                           )}
                         </div>
-                        <button
-                          onClick={() => handleGenerateVideo(shot)}
-                          disabled={!sbKf?.imageUrl || isVideoGenerating}
-                          className={`w-full py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors ${
-                            shot.interval?.videoUrl
-                              ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                              : 'bg-indigo-600 text-white hover:bg-indigo-500'
-                          } ${(!sbKf?.imageUrl || isVideoGenerating) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                          {isVideoGenerating ? (
-                            <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
-                          ) : (
-                            <><Video className="w-3 h-3" /> {shot.interval?.videoUrl ? '重新生成' : '生成视频'}</>
-                          )}
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => handleGenerateVideo(shot)}
+                            disabled={!sbKf?.imageUrl || isVideoGenerating}
+                            className={`flex-1 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors ${
+                              shot.interval?.videoUrl
+                                ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                                : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                            } ${(!sbKf?.imageUrl || isVideoGenerating) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            {isVideoGenerating ? (
+                              <><Loader2 className="w-3 h-3 animate-spin" /> 生成中</>
+                            ) : (
+                              <><Video className="w-3 h-3" /> {shot.interval?.videoUrl ? '重新生成' : '生成视频'}</>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenVideoLibrary(shot.id)}
+                            disabled={isVideoGenerating}
+                            className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-bold rounded-md flex items-center justify-center disabled:opacity-50 transition-colors border border-zinc-700"
+                            title="从资源库选择视频"
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
