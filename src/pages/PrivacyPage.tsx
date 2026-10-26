@@ -67,6 +67,12 @@ export const PrivacyPage: React.FC = () => {
       method: t('privacy.locationMethod'),
       scope: t('privacy.locationScope'),
     },
+    {
+      type: t('privacy.cameraType'),
+      purpose: t('privacy.cameraPurpose'),
+      method: t('privacy.cameraMethod'),
+      scope: t('privacy.cameraScope'),
+    },
   ];
 
   const adscopeRows: InfoRow[] = [
